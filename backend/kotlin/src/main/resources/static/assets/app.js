@@ -84,7 +84,8 @@ function WorkerControl() {
         </span>
         ${running > 0
           ? html`<button class="btn btn-danger" disabled=${busy}
-                         onClick=${() => act('/workers/kill')}>Kill a worker</button>`
+                         title="SIGKILL the most recent worker JVM"
+                         onClick=${() => act('/workers/kill')}>Stop a worker</button>`
           : html`<span class="mono text-xs" style="color:var(--color-state-danger)">
                    nothing is polling the task queue
                  </span>`}
