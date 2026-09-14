@@ -112,8 +112,10 @@ be started and observed without leaving the tab.
 Starting a payout points the embedded pane at that run's **Timeline** tab
 (`/namespaces/{ns}/workflows/{id}/{runId}/timeline`), which needs the run id — the start
 response carries one, and the `?payout=` deep link carries it too so a refresh lands on the
-same tab. A **Temporal UI** row above the scenario controls re-points the pane at Workflows,
-Workers or Schedules.
+same tab. What that pane shows is annotated rather than anonymous: the execution carries a
+static summary and details, each activity a summary, and both deadline timers one too, so an
+approval wait reads "Waiting for SENIOR approval" instead of a bare timer. A **Temporal UI** row
+above the scenario controls re-points the pane at Workflows, Workers or Schedules.
 
 Its **Workers** button goes to the task-queue page (`/namespaces/{ns}/task-queues/{queue}`)
 rather than Temporal's own Workers view, deliberately: the task-queue page is scoped to
