@@ -80,7 +80,9 @@ is not a safe assumption.
 Five scenarios on the **Demo** tab, each with its own controls and explanatory notes:
 
 1. **Successful payout** — the baseline. Validate → reserve → FX → select rail → submit →
-   confirm → complete.
+   confirm → complete. Rail, region and currency are fixed server-side rather than exposed as
+   controls: none of them changed an outcome, and the screen space is better spent on the
+   Temporal pane.
 2. **Transient failure + retry** — the rail times out twice, then accepts, on the same
    idempotency key. There is no retry loop in the code; the policy is declarative.
 3. **Permanent failure + compensation** — a non-retryable rejection triggers saga
@@ -101,7 +103,7 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
 The **Metrics** tab runs the load simulator and embeds the Grafana dashboard, so traffic can
 be started and observed without leaving the tab.
 
-A **Right pane** row above the scenario controls re-points the embedded Temporal Web at
+A **Temporal UI** row above the scenario controls re-points the embedded pane at
 Workflows, Workers or Schedules. Worth knowing: **Temporal Web has no top-level Workers
 view.** Workers are listed on the task-queue page (`/namespaces/{ns}/task-queues/{queue}`),
 showing each poller's ID, build ID, last-accessed time and which handlers it registers.

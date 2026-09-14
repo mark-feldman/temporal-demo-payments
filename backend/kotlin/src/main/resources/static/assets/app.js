@@ -214,9 +214,6 @@ function StatusCard({ status, error }) {
 
 function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
   const [amount, setAmount] = useState(scenario.defaults.amountMinor)
-  const [rail, setRail] = useState('HTTP')
-  const [region, setRegion] = useState('SG')
-  const [currency, setCurrency] = useState('USD')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [pollOutcome, setPollOutcome] = useState('completed')
@@ -229,7 +226,7 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
         body: JSON.stringify({
           ...scenario.defaults,
           ...(scenario.pollOutcomes?.find(o => o.id === pollOutcome)?.cfg ?? {}),
-          amountMinor: Number(amount), rail, region, currency,
+          amountMinor: Number(amount),
         }),
       })
       onStarted(r)
@@ -258,26 +255,12 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
 
       <div class="panel p-4 space-y-3">
         <${Eyebrow}>Scenario controls<//>
-        <div class="grid grid-cols-2 gap-3">
-          <${Field} label="Amount (minor units)">
-            <input class="input" type="number" value=${amount} onInput=${e => setAmount(e.target.value)} />
-          <//>
-          <${Field} label="Currency">
-            <select class="input" value=${currency} onChange=${e => setCurrency(e.target.value)}>
-              ${['USD', 'SGD', 'AUD', 'CNY', 'EUR'].map(c => html`<option>${c}</option>`)}
-            </select>
-          <//>
-          <${Field} label="Rail">
-            <select class="input" value=${rail} onChange=${e => setRail(e.target.value)}>
-              ${['HTTP', 'SFTP', 'MQ'].map(c => html`<option>${c}</option>`)}
-            </select>
-          <//>
-          <${Field} label="Region">
-            <select class="input" value=${region} onChange=${e => setRegion(e.target.value)}>
-              ${['SG', 'CN', 'AU'].map(c => html`<option>${c}</option>`)}
-            </select>
-          <//>
-        </div>
+        <!-- Rail, region and currency are supplied by the server defaults. They were controls
+             once, but none of them changed a branch, a timeout or an outcome, and two inert
+             dropdowns are worse than none in a demo that argues everything on screen is real. -->
+        <${Field} label="Amount (minor units, USD)">
+          <input class="input" type="number" value=${amount} onInput=${e => setAmount(e.target.value)} />
+        <//>
         ${scenario.pollOutcomes && html`
           <${Field} label="When the workflow polls, the bank eventually...">
             <select class="input" value=${pollOutcome} onChange=${e => setPollOutcome(e.target.value)}>
@@ -484,7 +467,7 @@ function App() {
              Temporal Web and cold-start Grafana every time you switch. -->
         <div class="h-full ${tab === 'demo' ? 'flex' : 'hidden'}">
           <aside class="flex flex-col gap-3 p-4 overflow-auto"
-                 style="width:38%;min-width:420px;border-right:1px solid var(--color-line-subtle)">
+                 style="width:32%;min-width:360px;border-right:1px solid var(--color-line-subtle)">
             <div class="flex flex-wrap gap-1">
               ${SCENARIOS.map((s, i) => html`
                 <button class="btn ${scenarioId === s.id ? 'btn-secondary' : 'btn-ghost'}"
