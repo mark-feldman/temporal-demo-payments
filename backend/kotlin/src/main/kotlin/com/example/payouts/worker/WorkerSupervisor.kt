@@ -8,6 +8,7 @@ import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 data class WorkerInfo(val id: Int, val pid: Long, val port: Int, val alive: Boolean)
 
@@ -62,19 +63,47 @@ class WorkerSupervisor {
         return fleet()
     }
 
-    /** Clamped to [MAX_WORKERS]: every port above that has no scrape target behind it. */
+    /**
+     * Grows or shrinks the fleet, clamped to [MAX_WORKERS].
+     *
+     * The growth loop is BOUNDED and stops on a spawn that did not stay alive. It used to be
+     * `while (fleet().running < capped) spawn(nextFreeId())`, which never terminates when a
+     * spawned worker dies immediately: fleet() prunes the dead process, running never reaches
+     * the target, and the request never returns. In the UI that looks exactly like "the Start
+     * button went grey and no worker started" -- the button is disabled on `busy`, and `busy`
+     * is only cleared when the POST settles -- while the API spins spawning short-lived JVMs.
+     *
+     * It is reachable in ordinary use, not just in theory: `make start` runs `gradlew bootJar`
+     * and rewrites build/libs on its way past, and a worker spawned from a half-written jar
+     * exits at once.
+     */
     fun scaleTo(target: Int): WorkerFleet {
         val capped = target.coerceIn(0, MAX_WORKERS)
         if (capped != target) log.info("worker count {} clamped to the cap of {}", target, MAX_WORKERS)
-        while (fleet().running < capped) spawn(nextFreeId())
+        var attempts = 0
+        while (fleet().running < capped) {
+            if (attempts++ >= MAX_WORKERS) {
+                log.error(
+                    "gave up growing the fleet to {} after {} attempts -- workers are not staying alive; " +
+                        "check /tmp/payout-demo-worker-*.log",
+                    capped, attempts,
+                )
+                break
+            }
+            if (!spawn(nextFreeId())) break
+        }
         while (fleet().running > capped) kill()
         return fleet()
     }
 
     private fun nextFreeId(): Int = generateSequence(1) { it + 1 }.first { it !in workers.keys }
 
-    private fun spawn(id: Int) {
-        val jar = findJar() ?: run { log.error("no bootJar found; run ./gradlew bootJar"); return }
+    /** False if the worker could not be started at all, or started and exited immediately. */
+    private fun spawn(id: Int): Boolean {
+        val jar = findJar() ?: run {
+            log.error("no bootJar found in build/libs; run ./gradlew bootJar")
+            return false
+        }
         val port = portFor(id)
         val java = File(System.getProperty("java.home"), "bin/java").absolutePath
         val process = ProcessBuilder(
@@ -86,8 +115,20 @@ class WorkerSupervisor {
             redirectOutput(File("/tmp/payout-demo-worker-$id.log"))
             redirectErrorStream(true)
         }.start()
+        // A worker needs seconds to finish booting, but the PROCESS is alive from the first
+        // instant. Exiting inside this window means it never got off the ground -- a
+        // half-written jar, or a port still held -- and a dead process must never go into the
+        // map, or fleet() would prune it and the caller would spawn another.
+        if (process.waitFor(800, TimeUnit.MILLISECONDS)) {
+            log.error(
+                "worker {} exited immediately (status {}); see /tmp/payout-demo-worker-{}.log",
+                id, process.exitValue(), id,
+            )
+            return false
+        }
         workers[id] = process
         log.info("started worker {} pid {} on :{}", id, process.pid(), port)
+        return true
     }
 
     private fun findJar(): File? =

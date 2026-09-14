@@ -58,13 +58,19 @@ const Eyebrow = ({ children }) => html`<div class="eyebrow mb-2">${children}</di
 function WorkerControl() {
   const [fleet, setFleet] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState('')
   useEffect(() => {
     const poll = () => api('/workers').then(setFleet).catch(() => setFleet(null))
     poll(); const t = setInterval(poll, 2000); return () => clearInterval(t)
   }, [])
+  // The failure is SHOWN, not swallowed. This used to be a bare try/finally, so a rejected
+  // request cleared `busy` and left no trace -- the button simply came back and nothing had
+  // happened, which is indistinguishable from a click that missed.
   const act = async (path) => {
-    setBusy(true)
-    try { setFleet(await api(path, { method: 'POST' })) } finally { setBusy(false) }
+    setBusy(true); setFailed('')
+    try { setFleet(await api(path, { method: 'POST' })) }
+    catch (e) { setFailed(`request failed (${e.message}) — check the backend log`) }
+    finally { setBusy(false) }
   }
   const running = fleet?.running ?? 0
   // The cap comes from the fleet response rather than being restated here: WorkerSupervisor
@@ -93,6 +99,8 @@ function WorkerControl() {
         <div class="mono text-xs" style="color:var(--color-ink-muted)">
           ${fleet.workers.map(w => html`<div>worker ${w.id} · pid ${w.pid} · :${w.port}</div>`)}
         </div>`}
+      ${failed && html`
+        <div class="text-xs" style="color:var(--color-state-danger)">${failed}</div>`}
       ${running === 0 && html`
         <div class="text-xs" style="color:var(--color-state-warning)">
           Workflows are not progressing. Start a worker and watch them pick up where they left off.
