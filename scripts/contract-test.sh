@@ -44,7 +44,14 @@ S=$(await "$W" "COMPLETED" 15)
 
 # 3 -- approval signal advances the workflow
 W=$(start '{"scenario":"ct-approval","amountMinor":250000}' | jqv "['workflowId']")
-await "$W" "AWAITING_APPROVAL" 20 >/dev/null
+# Asserted, not just awaited. "3" below only checks the workflow is no longer waiting, which
+# is equally true of one that never waited at all -- so an approval gate that stopped firing
+# would have read PASS. The gate is the behaviour under test; check it happened.
+P=$(await "$W" "AWAITING_APPROVAL" 20)
+T=$(status "$W" | jqv "['approvalTier']")
+[[ "$P" == "AWAITING_APPROVAL" && "$T" == "SENIOR" ]] \
+  && ok "3a an amount above the threshold parks on human approval (tier=$T)" \
+  || bad "3a approval gate" "state=$P tier=$T"
 signal "$W" approval '{"approved":true,"approver":"contract-test"}'
 S=$(await "$W" "AWAITING_BANK_CONFIRMATION,COMPLETED" 20)
 [[ "$S" != "AWAITING_APPROVAL" ]] && ok "3 approval signal advances the workflow" || bad "3 approval" "$S"

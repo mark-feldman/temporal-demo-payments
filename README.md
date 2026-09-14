@@ -215,6 +215,12 @@ deadlines get tested at all), and an integration suite that boots the whole Spri
 against the SDK's in-memory test server. Those are Java-SDK-specific and deliberately not part
 of the cross-SDK contract.
 
+One test in the unit suite looks out of place and is not: every backend test supplies its own
+amount, so nothing proved that the amount a *scenario* starts with still crosses the approval
+threshold. `DemoScenarioDefaultsTest` reads the shipped `app.js` and checks each scenario's
+default against `ApprovalThresholds`, because a scenario that quietly drops below the boundary
+skips the human-approval branch without failing anything.
+
 | Backend | SDK | Status |
 |---|---|---|
 | Kotlin | Temporal Java SDK | Reference implementation |

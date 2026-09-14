@@ -213,7 +213,17 @@ function StatusCard({ status, error }) {
 }
 
 function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
-  const [amount, setAmount] = useState(scenario.defaults.amountMinor)
+  // DERIVED from the selected scenario, with edits kept per scenario -- not one value seeded
+  // from `scenario.defaults`. Preact diffs this component by type and position and it has no
+  // key, so switching scenarios reuses the same instance and a useState initialiser never runs
+  // again: the previous scenario's amount stayed in the field. Reaching scenario 4 from any of
+  // the others therefore started the approval demo at $250, under the $500 L1 threshold, so the
+  // workflow ran past AWAITING_APPROVAL and the Approve / Reject buttons -- which follow the
+  // live status, not the selected scenario -- never appeared. Deriving it makes that
+  // unrepresentable, and an amount you typed survives a trip to another scenario and back.
+  const [edits, setEdits] = useState({})
+  const amount = edits[scenario.id] ?? scenario.defaults.amountMinor
+  const setAmount = value => setEdits(prev => ({ ...prev, [scenario.id]: value }))
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [pollOutcome, setPollOutcome] = useState('completed')
