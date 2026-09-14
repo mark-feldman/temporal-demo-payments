@@ -144,7 +144,7 @@ const SCENARIOS = [
   {
     id: 'successful', name: 'Successful payout',
     blurb: 'Validate, reserve, FX, select rail, submit, confirm, complete. The baseline every other scenario diverges from.',
-    defaults: { scenario: 'successful', amountMinor: 25000, behavior: 'PASS' },
+    defaults: { scenario: 'successful', amountMinor: 7500, behavior: 'PASS' },
     notes: [
       'The business process is one workflow function; the steps are ordinary sequential code.',
       'Each activity appears in the history on the right as scheduled, started and completed — no log correlation needed.',
@@ -154,7 +154,7 @@ const SCENARIOS = [
   {
     id: 'transient', name: 'Transient failure + retry',
     blurb: 'The rail times out twice, then accepts. Same idempotency key on every attempt.',
-    defaults: { scenario: 'transient', amountMinor: 25000, behavior: 'FAIL_TRANSIENT', transientFailures: 2 },
+    defaults: { scenario: 'transient', amountMinor: 7500, behavior: 'FAIL_TRANSIENT', transientFailures: 2 },
     notes: [
       'There is no retry loop in the code: the retry policy is declared on the activity stub.',
       'The final attempt count and the idempotency key are both on the activity; every attempt reuses that key.',
@@ -164,7 +164,7 @@ const SCENARIOS = [
   {
     id: 'permanent', name: 'Permanent failure + compensation',
     blurb: 'Non-retryable rail rejection triggers saga compensation: reserved funds released, payout marked failed.',
-    defaults: { scenario: 'permanent', amountMinor: 25000, behavior: 'FAIL_PERMANENT' },
+    defaults: { scenario: 'permanent', amountMinor: 7500, behavior: 'FAIL_PERMANENT' },
     notes: [
       'A non-retryable failure stops on the first attempt, unlike retry exhaustion.',
       'Compensation is ordinary code in the same workflow, and runs in reverse registration order.',

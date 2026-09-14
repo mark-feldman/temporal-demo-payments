@@ -90,20 +90,49 @@ class DemoScenarioDefaultsTest {
     }
 
     @Test
-    fun `every manual scenario still waits for a bank callback`() {
-        // Low-value payouts settle inline through settleWithBank: no wait and no timer, so
-        // the Bank buttons never appear, since those follow the live business status. The
-        // manual scenarios are driven by hand, so each one stays above the sync threshold.
-        //
-        // Scenario 5 in particular: a low-value unknown-callback payout would settle inline
-        // rather than reaching the polling path.
-        defaultsByScenario().forEach {
+    fun `the first three scenarios settle inline, and the last two wait for the bank`() {
+        // Which side of SYNC_BELOW_MINOR a scenario starts on decides whether it needs a hand
+        // on the Bank buttons. Scenarios 1-3 run start to finish unattended; 4 and 5 are about
+        // the durable wait itself, so they have to stay above it.
+        val (inline, awaiting) = defaultsByScenario().partition {
+            it.scenarioId in setOf("successful", "transient", "permanent")
+        }
+
+        inline.forEach {
+            val amount = requireNotNull(it.long("amountMinor")) { "$it has no amountMinor" }
+            assertTrue(
+                SettlementThresholds.settlesSynchronously(amount),
+                "$it starts at $amount minor units, at or above the " +
+                    "${SettlementThresholds.SYNC_BELOW_MINOR} sync-settlement threshold, so it " +
+                    "would park on AWAITING_BANK_CONFIRMATION and wait for someone to press a " +
+                    "Bank button instead of running through on its own",
+            )
+        }
+
+        awaiting.forEach {
             val amount = requireNotNull(it.long("amountMinor")) { "$it has no amountMinor" }
             assertTrue(
                 !SettlementThresholds.settlesSynchronously(amount),
                 "$it starts at $amount minor units, below the " +
                     "${SettlementThresholds.SYNC_BELOW_MINOR} sync-settlement threshold, so the " +
-                    "bank would answer inline and the scenario's Bank buttons would never appear",
+                    "bank would answer inline: scenario 4 would never reach the callback it " +
+                    "waits on after approval, and scenario 5 would never reach the polling path",
+            )
+        }
+    }
+
+    @Test
+    fun `an inline scenario pins the outcome rather than leaving it to chance`() {
+        // settleWithBank answers with the staged resolvedStatus, so a scenario that settles
+        // inline gets whatever it posts -- and COMPLETED when it posts nothing, which is the
+        // StartPayoutBody default. A scenario that posted REJECTED here would compensate every
+        // run, which is not what buttons 1 and 2 are demonstrating.
+        val inlineIds = setOf("successful", "transient")
+        defaultsByScenario().filter { it.scenarioId in inlineIds }.forEach {
+            assertEquals(
+                BankStatus.COMPLETED.name,
+                it.values["resolvedStatus"] ?: StartPayoutBody().resolvedStatus,
+                "$it settles inline, and settleWithBank answers with resolvedStatus",
             )
         }
     }

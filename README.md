@@ -157,8 +157,11 @@ resolve unchanged — at the cost of one rule: every route this app adds must li
 **How the bank confirms is chosen by the amount, and that branch is versioned.** Below
 `SettlementThresholds.SYNC_BELOW_MINOR` ($100) the rail answers inside the `settleWithBank`
 activity: no signal, no 45s timer, `SETTLING_WITH_BANK` in the timeline. At or above it the
-workflow waits durably on the callback. Every demo scenario starts above the threshold, so the
-inline path is exercised by the load simulator rather than by the buttons.
+workflow waits durably on the callback. Scenarios 1-3 start below the threshold so they run
+start to finish unattended; 4 and 5 start above it, because the durable wait is the thing they
+are demonstrating. The activity answers with the scenario's `resolvedStatus` rather than rolling
+for an outcome, so a demo button settles the same way every run, and the load simulator posts
+its own 80/20 split to keep a mix.
 
 Replacing one branch with another is the standard way to break replay, so
 `Workflow.getVersion("inline-settlement-for-low-value", ...)` gates it and executions started

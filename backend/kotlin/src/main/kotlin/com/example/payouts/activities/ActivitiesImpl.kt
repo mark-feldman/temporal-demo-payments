@@ -134,23 +134,19 @@ class BankActivitiesImpl(
         }
 
     /**
-     * The inline answer for a low-value instruction: [SYNC_SETTLEMENT_SUCCESS_PCT] settle, the
-     * rest are refused.
+     * The inline answer for a low-value instruction: whatever `resolvedStatus` says the bank
+     * reports, which is the same field polling resolves to. The caller decides, so a demo
+     * scenario settles the same way on every run; the load simulator posts its own split and
+     * keeps a mix.
      *
      * `mock.run` applies the same failure injection as every other step, so a scenario staged
      * with `behavior=REJECTED, step=settleWithBank` throws a non-retryable BankRejected
-     * instead of rolling for an outcome.
+     * instead of answering at all.
      */
     override fun settleWithBank(request: BankSettlementRequest) =
         mock.run("settleWithBank", request.payoutId) {
-            val settled = Random.nextInt(100) < SYNC_SETTLEMENT_SUCCESS_PCT
-            BankSettlementResponse(status = if (settled) BankStatus.COMPLETED else BankStatus.REJECTED)
+            BankSettlementResponse(status = BankStatus.valueOf(scenarios.get(request.payoutId).resolvedStatus))
         }
-
-    private companion object {
-        /** Share of inline settlements that succeed. Rolled in the activity, so it replays. */
-        const val SYNC_SETTLEMENT_SUCCESS_PCT = 80
-    }
 }
 
 @Component

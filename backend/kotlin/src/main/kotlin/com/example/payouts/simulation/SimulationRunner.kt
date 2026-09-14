@@ -179,6 +179,13 @@ class SimulationRunner(
     private fun lowValue() = Random.nextLong(1_000, SettlementThresholds.SYNC_BELOW_MINOR)
 
     /**
+     * What the bank reports for an inline settlement. The activity answers with whatever the
+     * scenario staged, so a load run's mix of completed and rejected comes from here.
+     */
+    private fun settlementOutcome() =
+        if (Random.nextInt(100) < SYNC_SETTLEMENT_SUCCESS_PCT) "COMPLETED" else "REJECTED"
+
+    /**
      * Above the sync threshold and below the L1 approval threshold: confirmed out of band, so
      * it waits on the callback without also requiring an approver. The unknown-status scenario
      * uses this band; a low-value amount would settle inline instead of reaching the polling
@@ -192,11 +199,15 @@ class SimulationRunner(
         val c = config
         return when {
             roll < c.successPct ->
-                StartPayoutBody(scenario = "sim-success", amountMinor = lowValue())
+                StartPayoutBody(
+                    scenario = "sim-success", amountMinor = lowValue(),
+                    resolvedStatus = settlementOutcome(),
+                )
             roll < c.successPct + c.transientPct ->
                 StartPayoutBody(
                     scenario = "sim-retry", amountMinor = lowValue(),
                     behavior = Behavior.FAIL_TRANSIENT, transientFailures = Random.nextInt(1, 3),
+                    resolvedStatus = settlementOutcome(),
                 )
             roll < c.successPct + c.transientPct + c.permanentPct ->
                 StartPayoutBody(
@@ -215,5 +226,10 @@ class SimulationRunner(
             region = Region.entries.random(),
             customerId = "cust-%04d".format(Random.nextInt(1, 500)),
         )
+    }
+
+    private companion object {
+        /** Share of inline settlements that complete. The rest are refused by the bank. */
+        const val SYNC_SETTLEMENT_SUCCESS_PCT = 80
     }
 }
