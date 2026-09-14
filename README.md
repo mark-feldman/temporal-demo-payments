@@ -22,7 +22,10 @@ Then open **http://localhost:8080**.
 ```
 make stop            stop everything
 make reset           stop and clear ALL state, including workflow history
-make test            contract tests
+make test            contract tests, over HTTP against a running stack
+make test-unit       JUnit unit suite (no stack needed)
+make test-integration Spring + in-memory Temporal test server (no stack needed)
+make build           compile and run both JUnit suites
 make css             recompile the stylesheet
 make workers N=2     run N extra worker processes
 make workers-down    stop the extras, leave the primary running
@@ -185,6 +188,8 @@ backend/kotlin/          Spring Boot app: API + worker + static assets, one proc
     activities/          five interfaces, trivial mocks (delay, log, canned result)
     api/                 REST controllers, metrics, status collector
     simulation/          load generator
+  src/test/              JUnit 5 unit suite — TestWorkflowEnvironment, time skipping
+  src/integrationTest/   Spring Boot against the SDK's in-memory Temporal test server
   src/css/app.css        Tailwind source  (compiled output is committed)
 backend/contract/        the demo backend contract, for future SDK implementations
 config/                  Caddyfile, Prometheus, Grafana provisioning + dashboard
@@ -203,6 +208,12 @@ provisioned and embedded.
 Single backend implementation today. `backend/contract/` describes what a second SDK
 implementation would have to satisfy, and `scripts/contract-test.sh` is that contract made
 executable — it drives the HTTP API only, so any future backend can be checked against it.
+
+Alongside it, `make build` runs two JUnit 5 suites that need nothing running: a unit suite on
+`TestWorkflowEnvironment` with time skipping (which is how the 30s approval and 45s bank
+deadlines get tested at all), and an integration suite that boots the whole Spring context
+against the SDK's in-memory test server. Those are Java-SDK-specific and deliberately not part
+of the cross-SDK contract.
 
 | Backend | SDK | Status |
 |---|---|---|

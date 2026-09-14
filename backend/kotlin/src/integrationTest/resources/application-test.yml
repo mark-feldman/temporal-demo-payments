@@ -1,0 +1,19 @@
+# Integration-test profile: the whole Spring context, but against the SDK's in-memory test
+# server rather than a dev server on 7233.
+#
+# `connection.target` from application.yml is deliberately left alone. ServiceStubsTemplate
+# prefers the test-environment adapter whenever one exists, so the 127.0.0.1:7233 setting is
+# simply never consulted -- no override needed, and no risk of the suite touching live state.
+spring:
+  temporal:
+    test-server:
+      enabled: true
+    # application.yml defaults this to false because the demo runs its workers as separate
+    # JVMs. Here the worker has to live in-process: there is no jar to fork, and the test
+    # server is in this JVM's memory.
+    start-workers: true
+
+logging:
+  level:
+    io.temporal: WARN
+    com.example.payouts: WARN

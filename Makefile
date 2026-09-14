@@ -2,16 +2,19 @@ SHELL := /bin/bash
 JAVA_HOME := $(HOME)/.local/share/mise/installs/java/temurin-21.0.11+10.0.LTS
 GRADLE := cd backend/kotlin && JAVA_HOME=$(JAVA_HOME) ./gradlew
 
-.PHONY: help preflight start stop reset seed test css css-watch build logs workers workers-kill workers-down workers-status
+.PHONY: help preflight start stop reset seed test test-unit test-integration css css-watch build logs workers workers-kill workers-down workers-status
 
 help:
-	@echo "make preflight   verify images, tools, fonts and JDK are present"
-	@echo "make start       Temporal + Caddy/Prometheus/Grafana + backend"
-	@echo "make stop        stop everything"
-	@echo "make reset       stop and clear all demo state (history included)"
-	@echo "make seed        six workflows in six states"
-	@echo "make test        contract tests"
-	@echo "make css         compile Tailwind once  (css-watch to watch)"
+	@echo "make preflight        verify images, tools, fonts and JDK are present"
+	@echo "make start            Temporal + Caddy/Prometheus/Grafana + backend"
+	@echo "make stop             stop everything"
+	@echo "make reset            stop and clear all demo state (history included)"
+	@echo "make seed             six workflows in six states"
+	@echo "make test             contract tests        (needs a running stack)"
+	@echo "make test-unit        JUnit unit tests      (no stack needed)"
+	@echo "make test-integration Spring + in-memory Temporal test server (no stack needed)"
+	@echo "make build            compile + both JUnit suites"
+	@echo "make css              compile Tailwind once  (css-watch to watch)"
 
 preflight:
 	@echo "== Docker images =="
@@ -63,6 +66,13 @@ workers-status:
 
 test:
 	@bash scripts/contract-test.sh
+
+# Both JUnit suites run entirely in-JVM: no dev server, no Docker, no worker JVM.
+test-unit:
+	@$(GRADLE) test
+
+test-integration:
+	@$(GRADLE) integrationTest
 
 css:
 	@./tools/tailwindcss -i backend/kotlin/src/css/app.css -o backend/kotlin/src/main/resources/static/assets/app.css

@@ -3,6 +3,7 @@
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
       <module name="payout-demo" options="-parameters" />
+      <module name="payout-demo.integrationTest" options="-parameters" />
       <module name="payout-demo.main" options="-parameters" />
       <module name="payout-demo.test" options="-parameters" />
     </option>
