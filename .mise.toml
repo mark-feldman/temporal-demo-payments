@@ -9,3 +9,10 @@
 
 [tools]
 java = "temurin-21"
+
+# Pin the Temporal CLI too, and for the same reason as the JDK: two are installed on this
+# machine (mise has v1.6.1, Homebrew has 1.8.3) and which one `make start` gets depends
+# purely on PATH ordering. That silently changes the bundled Server and Web UI versions --
+# 2.45.3 has no top-level Workers view, 2.50.1 does -- so the demo would look different
+# depending on which shell it was launched from.
+"github:temporalio/cli" = { version = "v1.8.3", exe = "temporal" }

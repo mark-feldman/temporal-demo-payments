@@ -103,12 +103,18 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
 The **Metrics** tab runs the load simulator and embeds the Grafana dashboard, so traffic can
 be started and observed without leaving the tab.
 
-A **Temporal UI** row above the scenario controls re-points the embedded pane at
-Workflows, Workers or Schedules. Worth knowing: **Temporal Web has no top-level Workers
-view.** Workers are listed on the task-queue page (`/namespaces/{ns}/task-queues/{queue}`),
-showing each poller's ID, build ID, last-accessed time and which handlers it registers.
-The **Deployments** item in Temporal's own nav is Worker Deployments — worker versioning —
-which is a different concept.
+A **Temporal UI** row above the scenario controls re-points the embedded pane at Workflows,
+Workers or Schedules.
+
+Its **Workers** button goes to the task-queue page (`/namespaces/{ns}/task-queues/{queue}`)
+rather than Temporal's own Workers view, deliberately: the task-queue page is scoped to
+`payouts`, so the count is just your workers. Temporal's top-level Workers view also lists the
+server's internal `temporal-sys-per-ns-tq` worker, so killing one of yours takes the count from
+3 to 2 rather than 2 to 1 — avoidable confusion during the worker-recovery demo.
+
+That top-level **Workers** view only exists from Web UI ~2.50; on 2.45.3 there was none, and
+the task-queue page was the only place workers appeared. **Deployments** is a different thing
+again — Worker Deployments, i.e. versioning.
 
 ---
 

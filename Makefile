@@ -24,7 +24,14 @@ preflight:
 	  curl -sLo tools/tailwindcss https://github.com/tailwindlabs/tailwindcss/releases/download/v4.3.3/tailwindcss-macos-arm64 \
 	    && chmod +x tools/tailwindcss; fi
 	@test -x tools/tailwindcss && echo "  OK   tools/tailwindcss" || echo "  MISS tools/tailwindcss"
-	@command -v temporal >/dev/null && echo "  OK   $$(temporal --version)" || echo "  MISS temporal CLI"
+	@# Assert, do not just report. Two CLIs are installed and PATH order decides which one
+	@# `make start` gets, which silently changes the bundled Server and Web UI versions.
+	@v=$$(temporal --version 2>/dev/null); \
+	  case "$$v" in \
+	    *"1.8.3"*) echo "  OK   $$v" ;; \
+	    "")        echo "  MISS temporal CLI" ;; \
+	    *)         echo "  WRONG $$v"; echo "       expected 1.8.3 - run 'mise install' or check PATH order" ;; \
+	  esac
 	@echo "== JDK (must be 21, not the machine default 26) =="
 	@JAVA_HOME=$(JAVA_HOME) java -version 2>&1 | head -1 | sed 's/^/  /'
 	@echo "== Fonts =="
