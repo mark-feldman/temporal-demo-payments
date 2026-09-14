@@ -118,6 +118,7 @@ const SCENARIOS = [
       'The workflow is waiting durably: no polling loop and no thread held open.',
       'Kill the application entirely and it is still waiting when the process returns.',
       'The deadline is a workflow timer, so the timeout path is a branch in code, not a cron job.',
+      'After approval it still waits on the bank callback — the controls below follow whatever the workflow is blocked on.',
     ],
   },
   {
@@ -182,6 +183,12 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
     } catch (e) { setNote(`Could not start: ${e.message}`) } finally { setBusy(false) }
   }
 
+  // What the workflow is currently blocked on, straight from the Query.
+  const waitingFor =
+    status?.status === 'AWAITING_APPROVAL' ? 'approval'
+    : status?.status === 'AWAITING_BANK_CONFIRMATION' ? 'bank'
+    : 'none'
+
   const signal = async (path, body, label) => {
     try {
       await api(`/payouts/${current.workflowId}${path}`, { method: 'POST', body: JSON.stringify(body) })
@@ -226,14 +233,21 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
       ${current && html`
         <div class="panel p-4 space-y-2">
           <${Eyebrow}>Interact with this execution<//>
+          <!-- Controls follow the live status rather than the scenario, so a signal button
+               is offered exactly when the workflow is actually blocked waiting for it. The
+               approval path still needs a bank callback afterwards. -->
           <div class="flex flex-wrap gap-2">
-            ${scenario.id === 'approval' && html`
+            ${waitingFor === 'approval' && html`
               <button class="btn btn-secondary" onClick=${() => signal('/approval', { approved: true, approver: 'ops-1' }, 'Approval')}>Approve</button>
               <button class="btn btn-secondary" onClick=${() => signal('/approval', { approved: false, approver: 'ops-1' }, 'Rejection')}>Reject</button>`}
-            ${(scenario.id !== 'approval') && html`
+            ${waitingFor === 'bank' && html`
               <button class="btn btn-secondary" onClick=${() => signal('/bank-status', { status: 'COMPLETED', bankReference: '' }, 'Bank COMPLETED')}>Bank: completed</button>
               <button class="btn btn-secondary" onClick=${() => signal('/bank-status', { status: 'REJECTED', bankReference: '' }, 'Bank REJECTED')}>Bank: rejected</button>
               <button class="btn btn-secondary" onClick=${() => signal('/bank-status', { status: 'UNKNOWN', bankReference: '' }, 'Bank UNKNOWN')}>Bank: unknown</button>`}
+            ${waitingFor === 'none' && html`
+              <span class="mono text-xs" style="color:var(--color-ink-muted)">
+                ${status ? `${status.status} — nothing to signal` : 'starting…'}
+              </span>`}
           </div>
           <div class="mono text-xs" style="color:var(--color-ink-muted)">${current.workflowId}</div>
           ${note && html`<div class="text-xs" style="color:var(--color-state-warning)">${note}</div>`}
@@ -341,8 +355,17 @@ function MetricsTab() {
 function App() {
   // Hash deep-link: #metrics opens the metrics tab directly.
   const [tab, setTab] = useState(location.hash === '#metrics' ? 'metrics' : 'demo')
-  const [scenarioId, setScenarioId] = useState('successful')
-  const [current, setCurrent] = useState(null)
+  const [scenarioId, setScenarioId] = useState(() => {
+    const id = new URLSearchParams(location.search).get('payout') ?? ''
+    const name = id.split('-')[1]
+    return SCENARIOS.some(s => s.id === name) ? name : 'successful'
+  })
+  // ?payout=<workflowId> attaches to an existing run, so a page refresh mid-demo does
+  // not lose the workflow you were watching.
+  const [current, setCurrent] = useState(() => {
+    const id = new URLSearchParams(location.search).get('payout')
+    return id ? { workflowId: id, temporalUrl: `/namespaces/default/workflows/${id}` } : null
+  })
   const [status, setStatus] = useState(null)
   const [statusError, setStatusError] = useState(false)
   const [health, setHealth] = useState(null)
@@ -369,6 +392,7 @@ function App() {
 
   const onStarted = useCallback(r => {
     setCurrent(r); setStatus(null)
+    history.replaceState(null, '', `?payout=${encodeURIComponent(r.workflowId)}${location.hash}`)
     if (iframeRef.current) iframeRef.current.src = r.temporalUrl
   }, [])
 
