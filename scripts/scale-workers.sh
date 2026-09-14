@@ -8,11 +8,12 @@
 set -uo pipefail
 BASE="${BASE:-http://localhost:8081}/demo-api/workers"
 show() { curl -s "$BASE" | python3 -c '
-import sys,json
-d=json.load(sys.stdin)
-print(f"  {d[\"running\"]} worker(s) polling the payouts task queue")
+import sys, json
+d = json.load(sys.stdin)
+print("  %d of %d worker(s) polling the payouts task queue" % (d["running"], d["max"]))
 for w in d["workers"]:
-    print(f"    worker {w[\"id\"]}  pid {w[\"pid\"]}  :{w[\"port\"]}  {\"alive\" if w[\"alive\"] else \"dead\"}")
+    print("    worker %d  pid %d  :%d  %s" % (
+        w["id"], w["pid"], w["port"], "alive" if w["alive"] else "dead"))
 ' 2>/dev/null || echo "  API not reachable on :8081"; }
 
 case "${1:-status}" in
