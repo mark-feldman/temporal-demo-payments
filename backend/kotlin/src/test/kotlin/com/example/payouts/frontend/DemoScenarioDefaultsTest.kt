@@ -6,6 +6,7 @@ import com.example.payouts.model.domain.ApprovalTier
 import com.example.payouts.model.domain.BankStatus
 import com.example.payouts.model.domain.SettlementThresholds
 import com.example.payouts.scenario.Behavior
+import com.example.payouts.support.repoFile
 import com.example.payouts.workflow.DEMO_MIN_ATTEMPTS
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
@@ -232,21 +233,8 @@ class DemoScenarioDefaultsTest {
             .substringBefore("\n]")
             .ifBlank { fail("could not find the SCENARIOS array in ${appJs()}") }
 
-    /**
-     * A Gradle Test task runs in `backend/kotlin`, but an IDE run configuration may run from
-     * the repository root instead, so try both spellings at every level on the way up rather
-     * than trusting the working directory.
-     */
-    private fun appJs(): Path {
-        val relative = listOf(
-            Path.of("src/main/resources/static/assets/app.js"),
-            Path.of("backend/kotlin/src/main/resources/static/assets/app.js"),
-        )
-        var dir: Path? = Path.of("").toAbsolutePath()
-        while (dir != null) {
-            relative.map(dir::resolve).firstOrNull(Files::exists)?.let { return it }
-            dir = dir.parent
-        }
-        fail("could not find app.js from ${Path.of("").toAbsolutePath()}")
-    }
+    private fun appJs(): Path = repoFile(
+        "src/main/resources/static/assets/app.js",
+        "backend/kotlin/src/main/resources/static/assets/app.js",
+    )
 }

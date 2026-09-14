@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -212,7 +212,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Worker task slots available",
-      "description": "Remaining capacity per worker instance. Running `make workers N=2` adds two more series here.",
+      "description": "Executor capacity per worker. Should never sit at 0. With a full fleet this is 20 series, so the legend is a table with last and min rather than a list.",
       "datasource": {
         "type": "prometheus",
         "uid": "payout-demo-prom"
@@ -254,9 +254,13 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -391,7 +395,7 @@
       "id": 12,
       "type": "stat",
       "title": "Live worker instances",
-      "description": "Worker JVMs currently scraping, the API excluded (role=\"worker\"). Counts every port in the scrape list, so scaling past three is visible.",
+      "description": "Worker JVMs currently scraping, the API excluded (role=\"worker\"). The fleet caps at 10 (WorkerSupervisor.MAX_WORKERS) and every port in that range is a scrape target, so this counts the whole fleet rather than the first few.",
       "datasource": {
         "type": "prometheus",
         "uid": "payout-demo-prom"

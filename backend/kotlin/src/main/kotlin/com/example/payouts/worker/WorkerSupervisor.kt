@@ -11,7 +11,12 @@ import java.util.concurrent.ConcurrentHashMap
 
 data class WorkerInfo(val id: Int, val pid: Long, val port: Int, val alive: Boolean)
 
-data class WorkerFleet(val running: Int, val workers: List<WorkerInfo>)
+data class WorkerFleet(
+    val running: Int,
+    val workers: List<WorkerInfo>,
+    /** The cap, reported so the UI can show it rather than letting the button go dead. */
+    val max: Int = WorkerSupervisor.MAX_WORKERS,
+)
 
 /**
  * Runs the Temporal workers as separate JVMs and supervises them.
@@ -30,7 +35,6 @@ data class WorkerFleet(val running: Int, val workers: List<WorkerInfo>)
 class WorkerSupervisor {
     private val log = LoggerFactory.getLogger(javaClass)
     private val workers = ConcurrentHashMap<Int, Process>()
-    private val basePort = 8091
 
     @EventListener(ApplicationReadyEvent::class)
     fun startInitialWorker() {
@@ -40,7 +44,7 @@ class WorkerSupervisor {
     fun fleet(): WorkerFleet {
         workers.entries.removeIf { !it.value.isAlive }
         val list = workers.entries.sortedBy { it.key }.map { (id, p) ->
-            WorkerInfo(id = id, pid = p.pid(), port = basePort + id - 1, alive = p.isAlive)
+            WorkerInfo(id = id, pid = p.pid(), port = portFor(id), alive = p.isAlive)
         }
         return WorkerFleet(running = list.count { it.alive }, workers = list)
     }
@@ -58,9 +62,12 @@ class WorkerSupervisor {
         return fleet()
     }
 
+    /** Clamped to [MAX_WORKERS]: every port above that has no scrape target behind it. */
     fun scaleTo(target: Int): WorkerFleet {
-        while (fleet().running < target) spawn(nextFreeId())
-        while (fleet().running > target) kill()
+        val capped = target.coerceIn(0, MAX_WORKERS)
+        if (capped != target) log.info("worker count {} clamped to the cap of {}", target, MAX_WORKERS)
+        while (fleet().running < capped) spawn(nextFreeId())
+        while (fleet().running > capped) kill()
         return fleet()
     }
 
@@ -68,7 +75,7 @@ class WorkerSupervisor {
 
     private fun spawn(id: Int) {
         val jar = findJar() ?: run { log.error("no bootJar found; run ./gradlew bootJar"); return }
-        val port = basePort + id - 1
+        val port = portFor(id)
         val java = File(System.getProperty("java.home"), "bin/java").absolutePath
         val process = ProcessBuilder(
             java, "-jar", jar.absolutePath,
@@ -93,5 +100,27 @@ class WorkerSupervisor {
     @PreDestroy
     fun shutdown() {
         workers.values.forEach { it.destroyForcibly() }
+    }
+
+    companion object {
+        /**
+         * Worker N runs on [BASE_PORT] + N - 1, so the fleet occupies 8091-8100.
+         *
+         * These two numbers are not free to change on their own. Every port in that range
+         * needs a matching scrape target in `config/prometheus/prometheus.yml`, or a worker
+         * that starts fine is simply invisible: the fleet count under-reports and every
+         * per-instance panel quietly draws a subset. `PrometheusTargetsTest` asserts the
+         * range and the config agree.
+         *
+         * Ten is also about as much as a laptop wants -- each worker is a full Spring Boot JVM
+         * alongside the API, the dev server and three containers.
+         */
+        const val BASE_PORT = 8091
+        const val MAX_WORKERS = 10
+
+        fun portFor(id: Int): Int = BASE_PORT + id - 1
+
+        /** Every port the supervisor can ever allocate. */
+        fun allPorts(): List<Int> = (1..MAX_WORKERS).map(::portFor)
     }
 }

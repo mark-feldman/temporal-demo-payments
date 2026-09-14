@@ -23,10 +23,13 @@ scrape_configs:
   # 8090 + N.
   #
   # The list must cover every port the fleet can reach, not the two or three it usually
-  # has. `make workers N=5` and the UI's "Start a worker" button both scale past the end
-  # of a short list, and an unscraped worker is INVISIBLE rather than obviously missing:
-  # every panel keeps drawing, just for a subset of the fleet. Eight covers any plausible
-  # laptop fleet.
+  # has. `make workers N=10` and the UI's "Start a worker" button both scale to the cap, and
+  # an unscraped worker is INVISIBLE rather than obviously missing: every panel keeps drawing,
+  # just for a subset of the fleet.
+  #
+  # 8091-8100 is exactly WorkerSupervisor.BASE_PORT through BASE_PORT + MAX_WORKERS - 1.
+  # Those are the same numbers, in two files, and `PrometheusTargetsTest` fails if they
+  # ever stop agreeing.
   - job_name: payout-demo-worker
     metrics_path: /demo-api/actuator/prometheus
     static_configs:
@@ -43,4 +46,6 @@ scrape_configs:
           - 'host.docker.internal:8096'
           - 'host.docker.internal:8097'
           - 'host.docker.internal:8098'
+          - 'host.docker.internal:8099'
+          - 'host.docker.internal:8100'
         labels: { group: sdk-metrics, role: worker }

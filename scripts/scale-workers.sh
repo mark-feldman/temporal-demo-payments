@@ -2,7 +2,7 @@
 # Worker fleet control. The API supervises the worker JVMs, so this is a thin client
 # over /demo-api/workers -- the same endpoints the UI button uses.
 #
-#   scripts/scale-workers.sh up 3      run three workers
+#   scripts/scale-workers.sh up 3      run three workers (the cap is 10)
 #   scripts/scale-workers.sh kill      SIGKILL the most recent one
 #   scripts/scale-workers.sh status
 set -uo pipefail

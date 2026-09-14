@@ -14,6 +14,7 @@ help:
 	@echo "make test-unit        JUnit unit tests      (no stack needed)"
 	@echo "make test-integration Spring + in-memory Temporal test server (no stack needed)"
 	@echo "make build            compile + both JUnit suites"
+	@echo "make workers N=10     extra worker JVMs, up to 10 (workers-kill / -down / -status)"
 	@echo "make css              compile Tailwind once  (css-watch to watch)"
 
 preflight:
@@ -29,11 +30,12 @@ preflight:
 	@test -x tools/tailwindcss && echo "  OK   tools/tailwindcss" || echo "  MISS tools/tailwindcss"
 	@# Assert, do not just report. Two CLIs are installed and PATH order decides which one
 	@# `make start` gets, which silently changes the bundled Server and Web UI versions.
-	@v=$$(temporal --version 2>/dev/null); \
+	@pin=$$(sed -n 's|.*temporalio/cli.*version = "v\{0,1\}\([0-9.]*\)".*|\1|p' .mise.toml); \
+	  v=$$(temporal --version 2>/dev/null); \
 	  case "$$v" in \
-	    *"1.8.3"*) echo "  OK   $$v" ;; \
+	    *"$$pin"*) echo "  OK   $$v" ;; \
 	    "")        echo "  MISS temporal CLI" ;; \
-	    *)         echo "  WRONG $$v"; echo "       expected 1.8.3 - run 'mise install' or check PATH order" ;; \
+	    *)         echo "  WRONG $$v"; echo "       .mise.toml pins $$pin - run 'mise install' or check PATH order" ;; \
 	  esac
 	@echo "== JDK (must be 21, not the machine default 26) =="
 	@JAVA_HOME=$(JAVA_HOME) java -version 2>&1 | head -1 | sed 's/^/  /'

@@ -67,12 +67,17 @@ function WorkerControl() {
     try { setFleet(await api(path, { method: 'POST' })) } finally { setBusy(false) }
   }
   const running = fleet?.running ?? 0
+  // The cap comes from the fleet response rather than being restated here: WorkerSupervisor
+  // owns it, because it has to agree with the Prometheus target range. Showing it keeps
+  // "Start a worker" from going quietly dead at the ceiling mid-demo.
+  const max = fleet?.max ?? 10
+  const atCap = running >= max
   return html`
     <div class="panel p-4 space-y-2">
       <${Eyebrow}>Workers<//>
       <div class="flex items-center gap-2 flex-wrap">
         <span class="badge ${running > 0 ? 'badge-success' : 'badge-danger'}">
-          <span class="dot ${running > 0 ? '' : 'dot-pulse'}"></span>${running} running
+          <span class="dot ${running > 0 ? '' : 'dot-pulse'}"></span>${running} / ${max} running
         </span>
         ${running > 0
           ? html`<button class="btn btn-danger" disabled=${busy}
@@ -80,7 +85,8 @@ function WorkerControl() {
           : html`<span class="mono text-xs" style="color:var(--color-state-danger)">
                    nothing is polling the task queue
                  </span>`}
-        <button class="btn btn-secondary" disabled=${busy}
+        <button class="btn btn-secondary" disabled=${busy || atCap}
+                title=${atCap ? `${max} is the cap -- every port above it is unscraped` : 'Start another worker JVM'}
                 onClick=${() => act(`/workers/scale?count=${running + 1}`)}>Start a worker</button>
       </div>
       ${fleet?.workers?.length > 0 && html`
