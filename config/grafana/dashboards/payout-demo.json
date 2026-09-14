@@ -51,7 +51,7 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "sum by (activity_type) (rate(temporal_activity_execution_failed_total[1m]))",
+          "expr": "sum by (activity_type) (rate(temporal_activity_execution_failed_total{job=\"payout-demo-worker\"}[1m]))",
           "legendFormat": "{{activity_type}}",
           "range": true,
           "refId": "A"
@@ -107,7 +107,7 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(temporal_activity_schedule_to_start_latency_seconds_bucket[1m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(temporal_activity_schedule_to_start_latency_seconds_bucket{job=\"payout-demo-worker\"}[1m])))",
           "legendFormat": "p95",
           "range": true,
           "refId": "A"
@@ -163,7 +163,7 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(temporal_workflow_task_schedule_to_start_latency_seconds_bucket[1m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(temporal_workflow_task_schedule_to_start_latency_seconds_bucket{job=\"payout-demo-worker\"}[1m])))",
           "legendFormat": "p95",
           "range": true,
           "refId": "A"
@@ -201,7 +201,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Worker task slots available",
-      "description": "Remaining capacity. If this reaches zero the worker is the bottleneck, not Temporal.",
+      "description": "Remaining capacity per worker instance. Running `make workers N=2` adds two more series here.",
       "datasource": {
         "type": "prometheus",
         "uid": "payout-demo-prom"
@@ -219,10 +219,10 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "sum by (worker_type) (temporal_worker_task_slots_available)",
-          "legendFormat": "{{worker_type}}",
+          "refId": "A",
           "range": true,
-          "refId": "A"
+          "expr": "sum by (instance, worker_type) (temporal_worker_task_slots_available{job=\"payout-demo-worker\",worker_type=~\"ActivityWorker|WorkflowWorker\"})",
+          "legendFormat": "{{instance}} {{worker_type}}"
         }
       ],
       "fieldConfig": {
@@ -313,7 +313,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Payout business outcomes",
-      "description": "Live counts by businessStatus, from a Temporal visibility query over the custom search attribute -- the same query you would type into the Temporal Web filter box.",
+      "description": "Live counts by businessStatus from a Temporal visibility query over the custom search attribute. Aggregated with max across worker instances, which all report the same numbers.",
       "datasource": {
         "type": "prometheus",
         "uid": "payout-demo-prom"
@@ -333,7 +333,7 @@
           "editorMode": "code",
           "refId": "A",
           "range": true,
-          "expr": "payout_current_status",
+          "expr": "max by (businessStatus) (payout_current_status)",
           "legendFormat": "{{businessStatus}}"
         },
         {
@@ -344,7 +344,7 @@
           "editorMode": "code",
           "refId": "B",
           "range": true,
-          "expr": "payout_workflows_started_total",
+          "expr": "sum(payout_workflows_started_total)",
           "legendFormat": "started (cumulative)"
         }
       ],
@@ -377,6 +377,69 @@
       }
     },
     {
+      "id": 12,
+      "type": "stat",
+      "title": "Live worker instances",
+      "description": "Worker processes currently scraping. `make workers N=2` takes this to 3.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "refId": "A",
+          "range": true,
+          "expr": "count(count by (instance) (up{job=\"payout-demo-worker\"} == 1))",
+          "legendFormat": "workers"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
       "id": 200,
       "type": "row",
       "title": "Worker throughput",
@@ -385,7 +448,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 19
       },
       "panels": []
     },
@@ -402,7 +465,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "targets": [
         {
@@ -411,7 +474,7 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "sum(rate(temporal_workflow_task_queue_poll_succeed_total[1m]))",
+          "expr": "sum(rate(temporal_workflow_task_queue_poll_succeed_total{job=\"payout-demo-worker\"}[1m]))",
           "legendFormat": "polls/s",
           "range": true,
           "refId": "A"
@@ -458,7 +521,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 16
+        "y": 20
       },
       "targets": [
         {
@@ -467,7 +530,7 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, activity_type) (rate(temporal_activity_execution_latency_seconds_bucket[1m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, activity_type) (rate(temporal_activity_execution_latency_seconds_bucket{job=\"payout-demo-worker\"}[1m])))",
           "legendFormat": "{{activity_type}}",
           "range": true,
           "refId": "A"
@@ -514,7 +577,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 16
+        "y": 20
       },
       "targets": [
         {
@@ -523,10 +586,10 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "sum(temporal_sticky_cache_size)",
-          "legendFormat": "entries",
+          "refId": "A",
           "range": true,
-          "refId": "A"
+          "expr": "sum by (instance) (temporal_sticky_cache_size{job=\"payout-demo-worker\"})",
+          "legendFormat": "{{instance}}"
         }
       ],
       "fieldConfig": {
@@ -566,7 +629,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 27
       },
       "panels": []
     },
@@ -583,7 +646,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 28
       },
       "targets": [
         {
@@ -592,7 +655,7 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "sum by (operation) (rate(temporal_request_total[1m]))",
+          "expr": "sum by (operation) (rate(temporal_request_total{job=\"payout-demo-worker\"}[1m]))",
           "legendFormat": "{{operation}}",
           "range": true,
           "refId": "A"
@@ -639,7 +702,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 28
       },
       "targets": [
         {
@@ -648,7 +711,7 @@
             "uid": "payout-demo-prom"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(temporal_request_latency_seconds_bucket[1m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(temporal_request_latency_seconds_bucket{job=\"payout-demo-worker\"}[1m])))",
           "legendFormat": "{{operation}}",
           "range": true,
           "refId": "A"

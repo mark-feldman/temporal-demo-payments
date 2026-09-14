@@ -17,8 +17,16 @@ scrape_configs:
   # The Temporal Spring Boot starter auto-wires its Tally scope to the Micrometer
   # registry whenever spring-boot-starter-actuator is present, so temporal_* SDK
   # metrics land here alongside the payout_* counters -- one scrape, not two.
+  #
+  # :8081 is the primary. :8091 and :8092 are the extra workers from
+  # `make workers`, and are expected to be DOWN whenever the fleet is scaled to
+  # one -- a down target here means "not running", not "broken".
   - job_name: payout-demo-worker
     metrics_path: /demo-api/actuator/prometheus
     static_configs:
       - targets: ['host.docker.internal:8081']
-        labels: { group: sdk-and-business-metrics }
+        labels: { group: sdk-and-business-metrics, role: primary }
+      - targets:
+          - 'host.docker.internal:8091'
+          - 'host.docker.internal:8092'
+        labels: { group: sdk-and-business-metrics, role: extra }

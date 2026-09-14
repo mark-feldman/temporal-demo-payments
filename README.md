@@ -52,6 +52,15 @@ They appear as separate rows under **Workers** on the task-queue page, and
 `make workers-down` stops them without touching the primary. Temporal keeps poller entries
 for a short while after a worker stops, so the count settles rather than dropping instantly.
 
+Prometheus scrapes `:8091` and `:8092` alongside the primary, so the extra workers show up
+on the dashboard individually: **Live worker instances** goes to 3, and **Worker task slots
+available** gains a series per instance. Those two targets read **DOWN** whenever the fleet
+is scaled to one — that means "not running", not "broken".
+
+One query detail worth knowing if you add panels: the Temporal server exposes
+`temporal_worker_task_slots_available` for its own internal system workers, so SDK panels
+filter on `job="payout-demo-worker"`. It is the only metric name that overlaps.
+
 | | |
 |---|---|
 | Demo | http://localhost:8080 |
