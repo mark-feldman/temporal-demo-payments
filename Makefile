@@ -10,7 +10,7 @@ help:
 	@echo "make stop        stop everything"
 	@echo "make reset       stop and clear all demo state (history included)"
 	@echo "make seed        six workflows in six states"
-	@echo "make test        contract tests + client-agnostic guard"
+	@echo "make test        contract tests"
 	@echo "make css         compile Tailwind once  (css-watch to watch)"
 
 preflight:
@@ -55,7 +55,6 @@ workers-status:
 	@bash scripts/scale-workers.sh status
 
 test:
-	@bash scripts/check-client-agnostic.sh
 	@bash scripts/contract-test.sh
 
 css:

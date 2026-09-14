@@ -22,7 +22,7 @@ Then open **http://localhost:8080**.
 ```
 make stop            stop everything
 make reset           stop and clear ALL state, including workflow history
-make test            contract tests + the client-agnostic guard
+make test            contract tests
 make css             recompile the stylesheet
 make workers N=2     run N extra worker processes
 make workers-down    stop the extras, leave the primary running
@@ -180,7 +180,7 @@ backend/kotlin/          Spring Boot app: API + worker + static assets, one proc
   src/css/app.css        Tailwind source  (compiled output is committed)
 backend/contract/        the demo backend contract, for future SDK implementations
 config/                  Caddyfile, Prometheus, Grafana provisioning + dashboard
-scripts/                 start / stop / reset / seed / contract-test / client-agnostic guard
+scripts/                 start / stop / reset / seed / contract-test / scale-workers
 tools/tailwindcss        vendored standalone binary, no npm anywhere
 ```
 
