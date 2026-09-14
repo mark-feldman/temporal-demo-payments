@@ -30,8 +30,8 @@ spring:
         # preset is ~175 activity executions/sec against a single worker on a developer
         # machine -- the limits should be visible rather than implied.
         capacity:
-          max-concurrent-workflow-task-executors: 100
-          max-concurrent-activity-executors: 100
+          max-concurrent-workflow-task-executors: 200
+          max-concurrent-activity-executors: 200
           # Pollers autoscale rather than sitting at a fixed count. 20 is the CEILING under
           # backlog, not a constant: idle workers hold 1-2 long polls instead of 40.
           #
