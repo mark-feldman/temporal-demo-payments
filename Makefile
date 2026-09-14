@@ -31,7 +31,7 @@ preflight:
 	@# Assert, do not just report. Two CLIs are installed and PATH order decides which one
 	@# `make start` gets, which silently changes the bundled Server and Web UI versions.
 	@pin=$$(sed -n 's|.*temporalio/cli.*version = "v\{0,1\}\([0-9.]*\)".*|\1|p' .mise.toml); \
-	  v=$$(temporal --version 2>/dev/null); \
+	  source scripts/temporal-bin.sh; v=$$($$(temporal_bin) --version 2>/dev/null); \
 	  case "$$v" in \
 	    *"$$pin"*) echo "  OK   $$v" ;; \
 	    "")        echo "  MISS temporal CLI" ;; \

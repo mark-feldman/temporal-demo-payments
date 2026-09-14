@@ -4,6 +4,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 LOG=/tmp/payout-demo-backend.log
+source "$(dirname "$0")/temporal-bin.sh"
+TEMPORAL="$(temporal_bin)" || exit 1
 
 port_busy() { lsof -iTCP:"$1" -sTCP:LISTEN -n -P >/dev/null 2>&1; }
 
@@ -28,22 +30,23 @@ done
 # copy of the number is just a third thing to forget to update.
 EXPECTED_CLI=$(sed -n 's|.*temporalio/cli.*version = "v\{0,1\}\([0-9.]*\)".*|\1|p' .mise.toml)
 [[ -n "$EXPECTED_CLI" ]] || { echo "Could not read the temporal CLI pin from .mise.toml"; exit 1; }
-ACTUAL_CLI=$(temporal --version 2>/dev/null)
+ACTUAL_CLI=$("$TEMPORAL" --version 2>/dev/null)
 case "$ACTUAL_CLI" in
   *"$EXPECTED_CLI"*) ;;
   "") echo "No temporal CLI on PATH. Run 'mise install'."; exit 1 ;;
   *)  echo "Wrong temporal CLI: $ACTUAL_CLI"
+      echo "  resolved to: $TEMPORAL"
       echo "  .mise.toml pins $EXPECTED_CLI, and the CLI decides the bundled Server and Web UI."
       echo "  Fix PATH order or run 'mise install', then 'make preflight' to confirm."
       exit 1 ;;
 esac
 
 echo "1/4  Temporal dev server..."
-if ! temporal operator cluster health >/dev/null 2>&1; then
+if ! "$TEMPORAL" operator cluster health >/dev/null 2>&1; then
   nohup bash scripts/start-temporal.sh >/tmp/payout-demo-temporal.log 2>&1 &
   for _ in $(seq 1 30); do temporal operator cluster health >/dev/null 2>&1 && break; sleep 1; done
 fi
-temporal operator cluster health >/dev/null 2>&1 || { echo "  Temporal failed to start"; exit 1; }
+"$TEMPORAL" operator cluster health >/dev/null 2>&1 || { echo "  Temporal failed to start"; exit 1; }
 echo "     SERVING on :7233, UI :8233, metrics :8000"
 
 echo "2/4  Caddy, Prometheus, Grafana..."
