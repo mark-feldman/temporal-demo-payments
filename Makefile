@@ -2,7 +2,7 @@ SHELL := /bin/bash
 JAVA_HOME := $(HOME)/.local/share/mise/installs/java/temurin-21.0.11+10.0.LTS
 GRADLE := cd backend/kotlin && JAVA_HOME=$(JAVA_HOME) ./gradlew
 
-.PHONY: help preflight start stop reset seed test css css-watch build logs
+.PHONY: help preflight start stop reset seed test css css-watch build logs workers workers-down workers-status
 
 help:
 	@echo "make preflight   verify images, tools, fonts and JDK are present"
@@ -41,6 +41,15 @@ reset:
 
 seed:
 	@bash scripts/seed-demo-data.sh
+
+workers:
+	@bash scripts/scale-workers.sh up $(or $(N),2)
+
+workers-down:
+	@bash scripts/scale-workers.sh down
+
+workers-status:
+	@bash scripts/scale-workers.sh status
 
 test:
 	@bash scripts/check-client-agnostic.sh

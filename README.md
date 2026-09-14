@@ -20,11 +20,37 @@ make seed          # six workflows in six distinct states
 Then open **http://localhost:8080**.
 
 ```
-make stop     stop everything
-make reset    stop and clear ALL state, including workflow history
-make test     contract tests + the client-agnostic guard
-make css      recompile the stylesheet
+make stop            stop everything
+make reset           stop and clear ALL state, including workflow history
+make test            contract tests + the client-agnostic guard
+make css             recompile the stylesheet
+make workers N=2     run N extra worker processes
+make workers-down    stop the extras, leave the primary running
+make workers-status  who is polling the task queue
 ```
+
+### Scaling workers
+
+`make workers N=2` brings the fleet to three and can be run while load is in flight:
+
+```
+Workers polling the 'payouts' task queue:
+  UNVERSIONED  activity  TasksDispatchRate  55.1     # 29.8 with one worker
+  Pollers:
+    workflow  86860@host   now
+    workflow  81911@host   now
+    workflow  86856@host   now
+```
+
+Three workers means three JVMs, not three workers in one. A `WorkerFactory` keys its
+workers by task queue and returns the existing one for a repeated call, so extra instances
+cannot come from a single process. The script launches the same jar again with a different
+`--server.port`, since the primary already holds `:8081`; nothing else differs, and each
+process gets its own identity (`pid@host`) automatically.
+
+They appear as separate rows under **Workers** on the task-queue page, and
+`make workers-down` stops them without touching the primary. Temporal keeps poller entries
+for a short while after a worker stops, so the count settles rather than dropping instantly.
 
 | | |
 |---|---|
