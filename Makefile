@@ -4,7 +4,7 @@ SHELL := /bin/bash
 JAVA_HOME := $(shell bash scripts/java-home.sh 2>/dev/null)
 GRADLE := cd backend/kotlin && JAVA_HOME=$(JAVA_HOME) ./gradlew
 
-.PHONY: help preflight require-jdk start stop reset seed test test-unit test-integration css css-watch build logs workers workers-kill workers-down workers-status
+.PHONY: help preflight require-jdk worker-reload start stop reset seed test test-unit test-integration css css-watch build logs workers workers-kill workers-down workers-status
 
 help:
 	@echo "make preflight        verify images, tools, fonts and JDK are present"
@@ -17,6 +17,7 @@ help:
 	@echo "make test-integration Spring + in-memory Temporal test server (no stack needed)"
 	@echo "make build            compile + both JUnit suites"
 	@echo "make workers N=3      scale the worker fleet to N JVMs, cap 10 (workers-kill / -down / -status)"
+	@echo "make worker-reload    rebuild the jar and restart the workers on it"
 	@echo "make css              compile Tailwind once  (css-watch to watch)"
 
 preflight:
@@ -63,6 +64,14 @@ seed:
 
 workers:
 	@bash scripts/scale-workers.sh up $(or $(N),2)
+
+# Workers exec the jar at spawn time, so a running one holds the code it started with:
+# new workflow or activity code needs a rebuild and a replacement process. Changes the API
+# links against -- controllers, the workflow interface, the query DTOs, the static assets --
+# need 'make stop && make start' instead.
+worker-reload: require-jdk
+	@$(GRADLE) bootJar -q --console=plain || { echo "  jar build failed"; exit 1; }
+	@bash scripts/scale-workers.sh reload
 
 workers-kill:
 	@bash scripts/scale-workers.sh kill

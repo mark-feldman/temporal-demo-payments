@@ -28,6 +28,7 @@ make test-integration Spring + in-memory Temporal test server (no stack needed)
 make build           compile and run both JUnit suites
 make css             recompile the stylesheet
 make workers N=3     scale the worker fleet to N JVMs (the cap is 10)
+make worker-reload   rebuild the jar and restart the workers on it
 make workers-kill    SIGKILL the most recent worker
 make workers-down    stop every worker; the API survives and can start replacements
 make workers-status  what is polling the task queue
