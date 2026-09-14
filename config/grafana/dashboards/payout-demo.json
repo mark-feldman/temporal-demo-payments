@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 5,
+  "version": 7,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -1079,6 +1079,137 @@
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Client RPC errors by type",
+      "description": "SDK-side RPC failures, grouped by gRPC status and the operation that failed. Long-poll expiry is deliberately NOT here: that arrives as DEADLINE_EXCEEDED on temporal_long_request_failure and is how an idle long poll is supposed to end, so including it would bury the real errors under routine noise.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "expr": "sum by (operation, status_code) (rate(temporal_request_failure_total{job=\"payout-demo-worker\"}[1m]))",
+          "legendFormat": "{{operation}} \u00b7 {{status_code}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Task queue dispatch rate by queue and type",
+      "description": "Tasks actually handed to a worker per second, per task queue and task type. poll_success is the TOTAL of successful polls with the sync matches included -- checked against the counters rather than assumed -- so it is the dispatch rate on its own; the second series breaks out the sync subset. Server-side, so it covers every queue including the temporal_sys_* ones, and it is the number to compare against arrival rate when a backlog is growing. (Combining both metrics in one selector is not possible: rate() drops __name__, the two collapse to identical labelsets and Prometheus rejects the query.)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (taskqueue, task_type) (rate(poll_success{taskqueue!=\"\"}[1m]))",
+          "legendFormat": "{{taskqueue}} \u00b7 {{task_type}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "refId": "B",
+          "range": true,
+          "expr": "sum by (taskqueue, task_type) (rate(poll_success_sync{taskqueue!=\"\"}[1m]))",
+          "legendFormat": "{{taskqueue}} \u00b7 {{task_type}} (sync subset)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
         },
         "tooltip": {
           "mode": "multi",
