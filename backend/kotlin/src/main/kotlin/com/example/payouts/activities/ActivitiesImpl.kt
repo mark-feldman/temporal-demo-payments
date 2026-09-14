@@ -101,6 +101,14 @@ class RailActivitiesImpl(private val mock: ActivityMock) : RailActivities {
                 attempt = mock.currentAttempt(),
             )
         }
+
+    override fun reverseRailInstruction(request: ReverseRailRequest) =
+        mock.run("reverseRailInstruction", request.payoutId, 500.milliseconds) {
+            ReverseRailResponse(
+                reversed = true,
+                reversalReference = "REV-${request.rail}-${request.payoutId.substringAfter("po-")}",
+            )
+        }
 }
 
 @Component
@@ -112,7 +120,8 @@ class BankActivitiesImpl(
     /**
      * The bank reports "pending" for the first few attempts, then gives a real answer.
      * Pending is thrown as a RETRYABLE failure, so the stub's retry policy is what does the
-     * polling -- no sleep loop in workflow code, and every attempt is an event you can point at.
+     * polling -- no sleep loop in workflow code. Intermediate attempts are not written to
+     * Event History; only the final attempt number is.
      */
     override fun pollBankStatus(request: BankStatusProbeRequest) =
         mock.run("pollBankStatus", request.payoutId, 400.milliseconds) {

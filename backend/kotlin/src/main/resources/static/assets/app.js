@@ -96,8 +96,8 @@ const SCENARIOS = [
     defaults: { scenario: 'transient', amountMinor: 25000, behavior: 'FAIL_TRANSIENT', transientFailures: 2 },
     notes: [
       'There is no retry loop in the code. The policy is declarative, next to the activity.',
-      'The attempt counter increments while the idempotency key stays the same.',
-      'Backoff shows up as gaps in the timeline. This uses the FAST profile; REALISTIC is slower.',
+      'The final attempt count and the same idempotency key are both visible on the activity.',
+      'Failed attempts are not separate history events — the backoff shows as the gap between ActivityTaskScheduled and ActivityTaskStarted.',
     ],
   },
   {
@@ -125,9 +125,14 @@ const SCENARIOS = [
     id: 'unknown', name: 'Unknown bank status',
     blurb: 'The bank accepted the instruction and never confirmed. The workflow polls the bank until it gets a real answer, rather than escalating.',
     defaults: { scenario: 'unknown', amountMinor: 25000, behavior: 'ACCEPTED_NO_CALLBACK' },
+    pollOutcomes: [
+      { id: 'completed', label: 'Bank confirms completed', cfg: { resolvedStatus: 'COMPLETED', pollsBeforeResolution: 3 } },
+      { id: 'rejected',  label: 'Bank confirms rejected',  cfg: { resolvedStatus: 'REJECTED', pollsBeforeResolution: 2 } },
+      { id: 'never',     label: 'Bank never answers',      cfg: { pollingNeverResolves: true } },
+    ],
     notes: [
       'The instruction was accepted but never confirmed, so the callback never arrives.',
-      'Rather than escalate, the workflow polls the bank — the retry policy on the poll activity is the polling loop, and every attempt is an event.',
+      'Rather than escalate, the workflow polls the bank — the retry policy on the poll activity is the polling loop.',
       'Whatever the bank eventually reports drives the outcome: completed, or rejected and compensated.',
       'Only if polling is exhausted does it compensate on an unresolved status — flagged UNKNOWN_BANK_STATUS, because releasing funds on an instruction that may have settled is a policy call, not a safe default.',
     ],
@@ -172,13 +177,18 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
   const [currency, setCurrency] = useState('USD')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [pollOutcome, setPollOutcome] = useState('completed')
 
   const start = async () => {
     setBusy(true); setNote('')
     try {
       const r = await api('/payouts', {
         method: 'POST',
-        body: JSON.stringify({ ...scenario.defaults, amountMinor: Number(amount), rail, region, currency }),
+        body: JSON.stringify({
+          ...scenario.defaults,
+          ...(scenario.pollOutcomes?.find(o => o.id === pollOutcome)?.cfg ?? {}),
+          amountMinor: Number(amount), rail, region, currency,
+        }),
       })
       onStarted(r)
     } catch (e) { setNote(`Could not start: ${e.message}`) } finally { setBusy(false) }
@@ -226,6 +236,12 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
             </select>
           <//>
         </div>
+        ${scenario.pollOutcomes && html`
+          <${Field} label="When the workflow polls, the bank eventually...">
+            <select class="input" value=${pollOutcome} onChange=${e => setPollOutcome(e.target.value)}>
+              ${scenario.pollOutcomes.map(o => html`<option value=${o.id}>${o.label}</option>`)}
+            </select>
+          <//>`}
         <button class="btn btn-primary w-full" disabled=${busy} onClick=${start}>
           ${busy ? 'Starting…' : 'Start payout'}
         </button>

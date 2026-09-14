@@ -59,5 +59,7 @@ data class PayoutStatusResponse(
     val railAttempts: Int = 0,
     val bankReference: String? = null,
     val usdEquivalentMinor: Long = 0,
+    /** Set when the saga reversed an instruction the bank had already accepted. */
+    val reversalReference: String = "",
     val history: List<String> = emptyList(),
 )

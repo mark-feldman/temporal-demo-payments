@@ -92,8 +92,14 @@ signal "$W" bank-status '{"status":"UNKNOWN"}'
 S=$(await "$W" "FAILED,COMPLETED" 60)
 FC=$(status "$W" | jqv "['failureCategory']")
 HIST=$(status "$W" | jqv "['history']")
+REV=$(status "$W" | jqv "['reversalReference']")
 [[ "$S" == "FAILED" && "$FC" == "UNKNOWN_BANK_STATUS" && "$HIST" == *COMPENSAT* ]] \
   && ok "7c exhausted polling compensates, flagged UNKNOWN_BANK_STATUS" || bad "7c poll-exhausted" "$S / $FC"
+
+# 7e -- the unwind reverses at the bank before releasing our own reservation
+[[ -n "$REV" ]] \
+  && ok "7e bank instruction reversed during the unwind ($REV)" \
+  || bad "7e reversal" "no reversalReference on a compensated payout"
 
 # 7d -- the API contract does not change shape with the values in it
 K=$(status "$W" | python3 -c 'import sys,json;print(",".join(sorted(json.load(sys.stdin))))')

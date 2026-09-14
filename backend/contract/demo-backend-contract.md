@@ -39,8 +39,13 @@ document made executable — it drives the HTTP surface only, never language int
 7. **Compensation must not give up** — no maximum attempts on the release activity, and it
    runs inside a detached cancellation scope so an external cancel cannot kill it.
 7b. **Compensations are registered before the activity they undo**, never after, so an activity
-   that dies mid-flight still has its compensation on the stack. Release by `payoutId` rather
-   than a reservation id, since the id is not known until the call returns.
+   that dies mid-flight still has its compensation on the stack. Keys must therefore be ones
+   known up front — release by `payoutId`, reverse by `idempotencyKey` — because the
+   reservation id and bank reference do not exist yet.
+7c. **The unwind reverses at the bank before releasing our own reservation.** Saga compensations
+   run in reverse registration order, which gives exactly that: `reverseRailInstruction`, then
+   `releaseReservedFunds`, then mark failed, then notify the customer. The reversal reference is
+   returned on the status response.
 8. **Business metrics from the API layer**, never from workflow code.
 
 ## Failure injection

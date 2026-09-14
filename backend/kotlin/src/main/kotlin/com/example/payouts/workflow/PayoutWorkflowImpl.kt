@@ -30,6 +30,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private var bankReference: String? = null
     private var usdEquivalentMinor = 0L
     private var payoutId = ""
+    private var reversalReference = ""
     private val history = mutableListOf<String>()
 
     private var approval: ApprovalDecisionRequest? = null
@@ -73,6 +74,21 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         },
     )
 
+    /** Reversal must not give up either: attempts unset, flat 5s. */
+    private val compensationRail = Workflow.newActivityStub(
+        RailActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(10))
+            setScheduleToCloseTimeout(Duration.ofHours(1))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("Reverse bank instruction")
+            setRetryOptions {
+                setInitialInterval(Duration.ofSeconds(5))
+                setBackoffCoefficient(1.0)
+            }
+        },
+    )
+
     private val fx = Workflow.newActivityStub(
         FxActivities::class.java,
         ActivityOptions {
@@ -97,9 +113,15 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     /**
      * The retry policy here is the polling loop: `pollBankStatus` throws a retryable failure
-     * while the bank says "pending", so Temporal re-invokes it on a schedule and every poll
-     * is an event in the history. Eight attempts at a 2s flat interval is roughly 16 seconds
-     * of asking before we accept that the bank is not going to answer.
+     * while the bank says "pending", so Temporal re-invokes it on a schedule. Eight attempts
+     * at a 2s flat interval is roughly 16 seconds of asking before we accept that the bank is
+     * not going to answer.
+     *
+     * Note what this does NOT produce: intermediate attempts are not written to Event History.
+     * One ActivityTaskScheduled, then ActivityTaskStarted carrying the final attempt number.
+     * The polls are observable while they are happening, through the pending-activity record
+     * on DescribeWorkflowExecution, and afterwards only as that attempt count plus the elapsed
+     * time between Scheduled and Started.
      */
     private val bank = Workflow.newActivityStub(
         BankActivities::class.java,
@@ -170,6 +192,20 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             // Rail selection is plain deterministic workflow code: no I/O, so no Activity.
             // Visibility comes from setCurrentDetails, not from an event.
             advance(BusinessStatus.SUBMITTING_TO_BANK, "Selected ${request.rail} rail for ${request.region}")
+            // Registered before the call for the same reason as the ledger release: if
+            // submitToRail dies after the bank accepted the instruction, we still have to be
+            // able to reverse it. Keyed on the idempotency key, which is known up front --
+            // the bank reference is not.
+            saga.addCompensation {
+                reversalReference = compensationRail.reverseRailInstruction(
+                    ReverseRailRequest(
+                        payoutId = request.payoutId,
+                        idempotencyKey = request.idempotencyKey,
+                        rail = request.rail,
+                        reason = failure.name,
+                    ),
+                ).reversalReference
+            }
             val submission = rail.submitToRail(
                 SubmitToRailRequest(
                     payoutId = request.payoutId,
@@ -223,6 +259,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         railAttempts = railAttempts,
         bankReference = bankReference,
         usdEquivalentMinor = usdEquivalentMinor,
+        reversalReference = reversalReference,
         history = history.toList(),
     )
 
@@ -300,15 +337,19 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
         // Compensation must survive the cancellation that triggered it.
         Workflow.newDetachedCancellationScope {
+            // Unwinds in reverse registration order: reverse the bank instruction first,
+            // then release the funds we reserved.
             saga.compensate()
+            advance(BusinessStatus.COMPENSATED, "Bank instruction reversed and reserved funds released")
             ledger.markPayout(
                 MarkPayoutRequest(request.payoutId, if (cancelled) "CANCELLED" else "FAILED", failure.name),
             )
-            notifier.notify(NotifyRequest(request.payoutId, "customer", "Payout ${failure.name}"))
+            notifier.notify(
+                NotifyRequest(request.payoutId, "customer", "Payout ${failure.name} - funds returned"),
+            )
         }.run()
 
         val terminal = if (cancelled) BusinessStatus.CANCELLED else BusinessStatus.FAILED
-        advance(BusinessStatus.COMPENSATED, "Reserved funds released")
         advance(terminal, "Payout ${terminal.name.lowercase()}")
         return ProcessPayoutResponse(
             payoutId = request.payoutId,

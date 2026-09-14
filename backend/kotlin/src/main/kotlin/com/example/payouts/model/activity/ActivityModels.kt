@@ -76,6 +76,22 @@ data class SubmitToRailResponse(
     val attempt: Int,
 )
 
+/**
+ * Asks the bank to reverse an instruction it already accepted. Keyed on the idempotency
+ * key rather than the bank reference, because the compensation is registered before
+ * submitToRail runs -- there is no reference to quote yet.
+ */
+@Serializable
+data class ReverseRailRequest(
+    val payoutId: String,
+    val idempotencyKey: String,
+    val rail: Rail,
+    val reason: String,
+)
+
+@Serializable
+data class ReverseRailResponse(val reversed: Boolean, val reversalReference: String)
+
 // ---- bank status (mock callback source, used by the simulation runner) ----
 
 @Serializable

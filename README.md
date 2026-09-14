@@ -90,9 +90,13 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
    application and it is still waiting when the process returns.
 5. **Unknown bank status** — the bank accepted an instruction and never confirmed. Rather than
    escalate, the workflow **polls the bank** until it gets a real answer and continues on its
-   own. The retry policy on the poll activity *is* the polling loop, so every attempt is an
-   event you can point at. Only when polling is exhausted does it compensate, flagged
-   `UNKNOWN_BANK_STATUS`.
+   own. The retry policy on the poll activity *is* the polling loop. Only when polling is
+   exhausted does it compensate — reversing the instruction at the bank, releasing the
+   reservation and notifying the customer — flagged `UNKNOWN_BANK_STATUS`.
+
+   Note that activity retries do **not** write per-attempt history events. The polls are
+   visible live through the pending-activity record, and afterwards as the final attempt
+   number plus the gap between `ActivityTaskScheduled` and `ActivityTaskStarted`.
 
 The **Metrics** tab runs the load simulator and embeds the Grafana dashboard, so traffic can
 be started and observed without leaving the tab.

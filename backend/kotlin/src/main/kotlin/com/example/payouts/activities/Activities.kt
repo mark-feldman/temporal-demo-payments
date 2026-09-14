@@ -32,6 +32,10 @@ interface FxActivities {
 interface RailActivities {
     @ActivityMethod
     fun submitToRail(request: SubmitToRailRequest): SubmitToRailResponse
+
+    /** Reverses an instruction the bank already accepted. Part of the saga unwind. */
+    @ActivityMethod
+    fun reverseRailInstruction(request: ReverseRailRequest): ReverseRailResponse
 }
 
 @ActivityInterface
