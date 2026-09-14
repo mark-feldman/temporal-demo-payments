@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 7,
+  "version": 8,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -659,7 +659,7 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 28
       },
@@ -715,8 +715,8 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 28
       },
       "targets": [
@@ -1097,9 +1097,9 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 50
+        "w": 8,
+        "x": 16,
+        "y": 28
       },
       "targets": [
         {
@@ -1132,13 +1132,9 @@
       },
       "options": {
         "legend": {
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
@@ -1157,8 +1153,8 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
-        "x": 12,
+        "w": 24,
+        "x": 0,
         "y": 50
       },
       "targets": [
