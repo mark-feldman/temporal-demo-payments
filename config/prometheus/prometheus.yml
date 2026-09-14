@@ -18,9 +18,15 @@ scrape_configs:
   # registry whenever spring-boot-starter-actuator is present, so temporal_* SDK
   # metrics land here alongside the payout_* counters -- one scrape, not two.
   #
-  # :8081 is the primary. :8091 and :8092 are the extra workers from
-  # `make workers`, and are expected to be DOWN whenever the fleet is scaled to
-  # one -- a down target here means "not running", not "broken".
+  # :8081 is the primary (the API). The workers are :8091 upwards -- WorkerSupervisor
+  # allocates `basePort + id - 1` from basePort 8091, so worker N always lands on
+  # 8090 + N.
+  #
+  # The list must cover every port the fleet can reach, not the two or three it usually
+  # has. `make workers N=5` and the UI's "Start a worker" button both scale past the end
+  # of a short list, and an unscraped worker is INVISIBLE rather than obviously missing:
+  # every panel keeps drawing, just for a subset of the fleet. Eight covers any plausible
+  # laptop fleet.
   - job_name: payout-demo-worker
     metrics_path: /demo-api/actuator/prometheus
     static_configs:
@@ -32,4 +38,9 @@ scrape_configs:
           - 'host.docker.internal:8091'
           - 'host.docker.internal:8092'
           - 'host.docker.internal:8093'
+          - 'host.docker.internal:8094'
+          - 'host.docker.internal:8095'
+          - 'host.docker.internal:8096'
+          - 'host.docker.internal:8097'
+          - 'host.docker.internal:8098'
         labels: { group: sdk-metrics, role: worker }

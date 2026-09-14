@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -145,7 +145,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Workflow task schedule-to-start",
-      "description": "The clearest worker-saturation signal. Watch it during the high-load simulation preset.",
+      "description": "The clearest worker-saturation signal. NOTE: the SDK histogram tops out at a 30s bucket, so p95 pinned at exactly 30 means \"above 30s, cannot say how far\" -- read the max series and the backlog panels below for the real number.",
       "datasource": {
         "type": "prometheus",
         "uid": "payout-demo-prom"
@@ -164,9 +164,20 @@
           },
           "editorMode": "code",
           "expr": "histogram_quantile(0.95, sum by (le) (rate(temporal_workflow_task_schedule_to_start_latency_seconds_bucket{job=\"payout-demo-worker\"}[1m])))",
-          "legendFormat": "p95",
+          "legendFormat": "p95 (clamps at 30s)",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "expr": "max(temporal_workflow_task_schedule_to_start_latency_seconds_max{job=\"payout-demo-worker\"})",
+          "legendFormat": "max (unclamped)",
+          "range": true,
+          "refId": "B"
         }
       ],
       "fieldConfig": {
@@ -380,7 +391,7 @@
       "id": 12,
       "type": "stat",
       "title": "Live worker instances",
-      "description": "Worker processes currently scraping. `make workers N=2` takes this to 3.",
+      "description": "Worker JVMs currently scraping, the API excluded (role=\"worker\"). Counts every port in the scrape list, so scaling past three is visible.",
       "datasource": {
         "type": "prometheus",
         "uid": "payout-demo-prom"
@@ -400,7 +411,7 @@
           "editorMode": "code",
           "refId": "A",
           "range": true,
-          "expr": "count(count by (instance) (up{job=\"payout-demo-worker\"} == 1))",
+          "expr": "count(count by (instance) (up{job=\"payout-demo-worker\",role=\"worker\"} == 1))",
           "legendFormat": "workers"
         }
       ],
@@ -720,6 +731,254 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Task queues (all queues, server-side)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Task queue backlog",
+      "description": "Tasks waiting to be dispatched, per queue and type. approximate_backlog_count is reported PER PARTITION, so it must be summed across partitions to be a queue depth.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 29
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "expr": "sum by (namespace, taskqueue, task_type) (approximate_backlog_count)",
+          "legendFormat": "{{namespace}}/{{taskqueue}} {{task_type}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Backlog age",
+      "description": "Age of the oldest task still queued. MAX across partitions, never sum -- summing ages multiplies the number by the partition count.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 29
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "expr": "max by (namespace, taskqueue, task_type) (approximate_backlog_age_seconds)",
+          "legendFormat": "{{namespace}}/{{taskqueue}} {{task_type}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Pollers by task queue",
+      "description": "Long polls open against each queue. Covers every queue: the demo workers report `payouts`, the server's internal workers report the temporal_sys_* queues. With poller autoscaling this rises under backlog and falls back to the minimum when idle.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "expr": "sum by (task_queue, poller_type) (temporal_num_pollers)",
+          "legendFormat": "{{task_queue}} {{poller_type}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Task dispatch: sync vs async match",
+      "description": "How tasks reach a worker. A sync match is handed straight to a poller that was already waiting; an async match had to be written to the backlog and picked up later. A queue running almost entirely on async match is a queue that is never caught up -- measured here at 0.9/s sync against 84/s async on the workflow side while the backlog stood at ~10k.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (taskqueue, task_type) (rate(syncmatch_latency_count[1m]))",
+          "legendFormat": "{{taskqueue}} {{task_type}} sync"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "refId": "B",
+          "range": true,
+          "expr": "sum by (taskqueue, task_type) (rate(asyncmatch_latency_count[1m]))",
+          "legendFormat": "{{taskqueue}} {{task_type}} async"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
           "color": {
             "mode": "palette-classic"
           },

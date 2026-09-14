@@ -32,8 +32,28 @@ spring:
         capacity:
           max-concurrent-workflow-task-executors: 100
           max-concurrent-activity-executors: 100
-          max-concurrent-workflow-task-pollers: 5
-          max-concurrent-activity-task-pollers: 5
+          # Pollers autoscale rather than sitting at a fixed count. 20 is the CEILING under
+          # backlog, not a constant: idle workers hold 1-2 long polls instead of 40.
+          #
+          # These are mutually exclusive with max-concurrent-workflow-task-pollers /
+          # max-concurrent-activity-task-pollers -- setting both fails context startup at the
+          # `temporalWorkers` bean with "workflowTaskPollersBehavior and
+          # maxConcurrentWorkflowTaskPollers are mutually exclusive"
+          # (WorkerOptions.validateAndBuildWithDefaults, verified on SDK 1.38.0). So the fixed
+          # counts are deleted, not commented out.
+          #
+          # min for workflow tasks cannot be 1: pollers alternate between the sticky and
+          # non-sticky queues, and the SDK silently raises 1 to 2.
+          workflow-task-pollers-configuration:
+            poller-behavior-autoscaling:
+              enabled: true
+              min-concurrent-task-pollers: 2
+              max-concurrent-task-pollers: 20
+          activity-task-pollers-configuration:
+            poller-behavior-autoscaling:
+              enabled: true
+              min-concurrent-task-pollers: 1
+              max-concurrent-task-pollers: 20
         rate-limits:
           max-worker-activities-per-second: 300
 
