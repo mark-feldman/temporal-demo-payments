@@ -52,6 +52,48 @@ const isTerminal = s => ['COMPLETED', 'FAILED', 'CANCELLED', 'UNKNOWN_BANK_STATU
 
 const Eyebrow = ({ children }) => html`<div class="eyebrow mb-2">${children}</div>`
 
+// Workers run as separate JVMs supervised by the API, so killing one is a real SIGKILL
+// and the API survives to start a replacement. In-flight workflow tasks time out, and the
+// new worker rebuilds state by replaying history.
+function WorkerControl() {
+  const [fleet, setFleet] = useState(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    const poll = () => api('/workers').then(setFleet).catch(() => setFleet(null))
+    poll(); const t = setInterval(poll, 2000); return () => clearInterval(t)
+  }, [])
+  const act = async (path) => {
+    setBusy(true)
+    try { setFleet(await api(path, { method: 'POST' })) } finally { setBusy(false) }
+  }
+  const running = fleet?.running ?? 0
+  return html`
+    <div class="panel p-4 space-y-2">
+      <${Eyebrow}>Workers<//>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="badge ${running > 0 ? 'badge-success' : 'badge-danger'}">
+          <span class="dot ${running > 0 ? '' : 'dot-pulse'}"></span>${running} running
+        </span>
+        ${running > 0
+          ? html`<button class="btn btn-danger" disabled=${busy}
+                         onClick=${() => act('/workers/kill')}>Kill a worker</button>`
+          : html`<span class="mono text-xs" style="color:var(--color-state-danger)">
+                   nothing is polling the task queue
+                 </span>`}
+        <button class="btn btn-secondary" disabled=${busy}
+                onClick=${() => act(`/workers/scale?count=${running + 1}`)}>Start a worker</button>
+      </div>
+      ${fleet?.workers?.length > 0 && html`
+        <div class="mono text-xs" style="color:var(--color-ink-muted)">
+          ${fleet.workers.map(w => html`<div>worker ${w.id} · pid ${w.pid} · :${w.port}</div>`)}
+        </div>`}
+      ${running === 0 && html`
+        <div class="text-xs" style="color:var(--color-state-warning)">
+          Workflows are not progressing. Start a worker and watch them pick up where they left off.
+        </div>`}
+    </div>`
+}
+
 // Temporal Web has no top-level Workers view: workers are listed on the task-queue page,
 // and "Deployments" is Worker Deployments (versioning), which is a different thing.
 const VIEWS = [
@@ -271,6 +313,7 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
         </div>`}
 
       <${StatusCard} status=${status} error=${statusError} />
+      <${WorkerControl} />
       <${Notes} items=${scenario.notes} />
     </div>`
 }
@@ -450,7 +493,7 @@ function App() {
             </div>
             <div class="flex flex-wrap items-center gap-1"
                  style="border-bottom:1px solid var(--color-line-subtle);padding-bottom:.6rem">
-              <span class="eyebrow" style="margin:0 .4rem 0 0">Right pane</span>
+              <span class="eyebrow" style="margin:0 .4rem 0 0">Temporal UI</span>
               ${VIEWS.map(v => html`
                 <button class="btn btn-ghost" title=${v.title}
                         style="font-size:.7rem;padding:.3rem .6rem"

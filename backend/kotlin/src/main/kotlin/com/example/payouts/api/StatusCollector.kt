@@ -5,6 +5,7 @@ import io.temporal.serviceclient.WorkflowServiceStubs
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Component
 
 /**
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Component
  * Temporal Web filter box.
  */
 @Component
+@ConditionalOnProperty(name = ["demo.role"], havingValue = "primary", matchIfMissing = true)
 class StatusCollector(
     private val service: WorkflowServiceStubs,
     private val metrics: BusinessMetrics,

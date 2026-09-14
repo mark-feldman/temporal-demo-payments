@@ -10,6 +10,7 @@ import com.example.payouts.model.workflow.BankStatusUpdateRequest
 import com.example.payouts.scenario.Behavior
 import kotlinx.coroutines.*
 import org.slf4j.LoggerFactory
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Component
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
@@ -46,6 +47,7 @@ data class SimulationStatus(
  * would break replay; here it is simply a load generator.
  */
 @Component
+@ConditionalOnProperty(name = ["demo.role"], havingValue = "primary", matchIfMissing = true)
 class SimulationRunner(
     private val payouts: PayoutController,
     private val metrics: BusinessMetrics,

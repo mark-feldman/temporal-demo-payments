@@ -27,7 +27,10 @@ echo "2/4  Caddy, Prometheus, Grafana..."
 docker compose up -d >/dev/null 2>&1
 echo "     up"
 
-echo "3/4  Backend (Kotlin + Spring Boot + worker)..."
+echo "3/4  Backend (API) + worker process..."
+# The API spawns worker JVMs from this jar, so it has to exist before boot.
+( cd backend/kotlin && JAVA_HOME="$HOME/.local/share/mise/installs/java/temurin-21.0.11+10.0.LTS" \
+  ./gradlew bootJar -q --console=plain ) || { echo "  jar build failed"; exit 1; }
 # Close stdin and redirect both streams, or the Gradle daemon keeps this script's pipe
 # open and `make start` never returns. (No setsid on macOS; the subshell + nohup is enough.)
 ( cd backend/kotlin && JAVA_HOME="$HOME/.local/share/mise/installs/java/temurin-21.0.11+10.0.LTS" \
@@ -35,7 +38,12 @@ echo "3/4  Backend (Kotlin + Spring Boot + worker)..."
 for _ in $(seq 1 90); do curl -sf http://localhost:8081/demo-api/health >/dev/null 2>&1 && break; sleep 2; done
 curl -sf http://localhost:8081/demo-api/health >/dev/null 2>&1 \
   || { echo "  Backend failed to start. Last lines of $LOG:"; tail -20 "$LOG"; exit 1; }
-echo "     UP on :8081"
+echo "     API UP on :8081"
+for _ in $(seq 1 20); do
+  n=$(curl -s http://localhost:8081/demo-api/workers 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin)["running"])' 2>/dev/null || echo 0)
+  [[ "$n" -ge 1 ]] && break; sleep 1
+done
+echo "     $n worker process(es) polling 'payouts'"
 
 echo "4/4  Ready."
 echo

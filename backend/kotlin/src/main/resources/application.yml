@@ -14,7 +14,10 @@ spring:
       # which applies both -- this is the difference between having SDK metrics and not.
       target: 127.0.0.1:7233
     namespace: default
-    start-workers: true
+    # The primary process is the API only. Workers run as separate JVMs that it
+    # supervises, so one can be killed and restarted on demand without taking the
+    # API -- and therefore the restart button -- down with it.
+    start-workers: ${DEMO_START_WORKERS:false}
     workers-auto-discovery:
       # `packages` is deprecated since SDK 1.35.0 and throws if mixed with these.
       workflow-packages:

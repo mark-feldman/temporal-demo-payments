@@ -31,6 +31,11 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private var usdEquivalentMinor = 0L
     private var payoutId = ""
     private var reversalReference = ""
+    // Deadline flags flipped by timer callbacks. Callbacks and signal handlers both run in
+    // event order, so "did the signal beat the deadline" is answered by which of the two ran
+    // first -- not by wall-clock, and not by which promise `await` happened to unblock on.
+    private var approvalDeadlinePassed = false
+    private var bankDeadlinePassed = false
     private val history = mutableListOf<String>()
 
     private var approval: ApprovalDecisionRequest? = null
@@ -242,10 +247,12 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     // ---- signals and query ----
 
     override fun approve(request: ApprovalDecisionRequest) {
-        approval = request
+        // Ignore a decision that arrives after the timer has already fired.
+        if (!approvalDeadlinePassed) approval = request
     }
 
     override fun bankStatusUpdate(request: BankStatusUpdateRequest) {
+        if (bankDeadlinePassed) return
         bankStatus = request.status
         if (request.bankReference.isNotBlank()) bankReference = request.bankReference
     }
@@ -267,15 +274,22 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     private fun awaitApproval(request: ProcessPayoutRequest): Boolean {
         advance(BusinessStatus.AWAITING_APPROVAL, "Waiting for $approvalTier approval")
-        val timeout = Duration.ofSeconds(approvalTimeoutSeconds())
-        val decided = Workflow.await(timeout) { approval != null }
+        // An explicit timer rather than await's built-in timeout. If no worker is alive, the
+        // signal and the timer both sit in history until one comes back, and await reports a
+        // timeout even though the approval genuinely arrived first. Ordering the two through
+        // event callbacks answers that correctly and identically on every replay.
+        Workflow.newTimer(Duration.ofSeconds(approvalTimeoutSeconds()))
+            .thenApply { approvalDeadlinePassed = true }
+        Workflow.await { approval != null || approvalDeadlinePassed }
+
+        val decision = approval
         return when {
-            !decided -> {
+            decision == null -> {
                 failure = FailureCategory.APPROVAL_TIMEOUT
                 false
             }
-            approval?.approved == true -> {
-                advance(BusinessStatus.APPROVED, "Approved by ${approval?.approver}")
+            decision?.approved == true -> {
+                advance(BusinessStatus.APPROVED, "Approved by ${decision.approver}")
                 true
             }
             else -> {
@@ -287,8 +301,11 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     private fun awaitBankStatus(): BankStatus {
         advance(BusinessStatus.AWAITING_BANK_CONFIRMATION, "Waiting for bank payment status")
-        val arrived = Workflow.await(Duration.ofSeconds(bankCallbackTimeoutSeconds())) { bankStatus != null }
-        return if (arrived) bankStatus ?: BankStatus.UNKNOWN else BankStatus.UNKNOWN
+        // Same ordering argument as the approval wait.
+        Workflow.newTimer(Duration.ofSeconds(bankCallbackTimeoutSeconds()))
+            .thenApply { bankDeadlinePassed = true }
+        Workflow.await { bankStatus != null || bankDeadlinePassed }
+        return bankStatus ?: BankStatus.UNKNOWN
     }
 
     /**

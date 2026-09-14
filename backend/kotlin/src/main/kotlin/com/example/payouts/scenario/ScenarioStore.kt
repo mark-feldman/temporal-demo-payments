@@ -41,8 +41,11 @@ data class ScenarioConfig(
  * history, so a replaying workflow replays the recorded outcome -- reading mutable config
  * from workflow code would be a non-determinism bug.
  *
- * Backed by a file because the demo includes killing the whole application. In-memory
- * config would silently reset on restart and turn a staged failure into a mystery success.
+ * Backed by a file for two reasons. The demo includes killing processes, and in-memory
+ * config would silently reset on restart, turning a staged failure into a mystery success.
+ * And the API and the workers are now separate JVMs -- the API writes the config, the
+ * worker's activities read it -- so the file is the channel between them. The worker
+ * reloads whenever the file changes underneath it.
  */
 @Component
 class ScenarioStore {
@@ -52,12 +55,21 @@ class ScenarioStore {
     private val path: Path = Path.of(System.getProperty("demo.scenarioFile") ?: ".scenario-store.json")
     private val configs = ConcurrentHashMap<String, ScenarioConfig>()
 
-    init {
-        if (path.exists()) {
-            runCatching { json.decodeFromString(mapSerializer, Files.readString(path)) }
-                .onSuccess { configs.putAll(it); log.info("Restored {} scenario configs", it.size) }
-                .onFailure { log.warn("Could not restore scenario store: {}", it.message) }
-        }
+    @Volatile private var loadedAtMs = 0L
+
+    init { reloadIfChanged() }
+
+    /**
+     * The API process writes this file; worker processes read it. Reload on mtime change so
+     * a worker started before a scenario was configured still sees it.
+     */
+    private fun reloadIfChanged() {
+        if (!path.exists()) return
+        val modified = runCatching { Files.getLastModifiedTime(path).toMillis() }.getOrDefault(0L)
+        if (modified == loadedAtMs) return
+        runCatching { json.decodeFromString(mapSerializer, Files.readString(path)) }
+            .onSuccess { configs.putAll(it); loadedAtMs = modified }
+            .onFailure { log.warn("Could not read scenario store: {}", it.message) }
     }
 
     fun put(payoutId: String, config: ScenarioConfig) {
@@ -65,7 +77,10 @@ class ScenarioStore {
         persist()
     }
 
-    fun get(payoutId: String): ScenarioConfig = configs[payoutId] ?: ScenarioConfig()
+    fun get(payoutId: String): ScenarioConfig {
+        if (!configs.containsKey(payoutId)) reloadIfChanged()
+        return configs[payoutId] ?: ScenarioConfig()
+    }
 
     fun all(): Map<String, ScenarioConfig> = configs.toMap()
 
@@ -109,7 +124,10 @@ class ScenarioStore {
     }
 
     private fun persist() {
-        runCatching { Files.writeString(path, json.encodeToString(mapSerializer, configs.toMap())) }
+        runCatching {
+            Files.writeString(path, json.encodeToString(mapSerializer, configs.toMap()))
+            loadedAtMs = Files.getLastModifiedTime(path).toMillis()
+        }
             .onFailure { log.warn("Could not persist scenario store: {}", it.message) }
     }
 }

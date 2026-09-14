@@ -1,0 +1,13 @@
+# Worker-only process. Same jar, same code; it just polls the task queue.
+# Spawned and killed by WorkerSupervisor in the API process.
+server:
+  port: ${WORKER_PORT:8091}
+
+spring:
+  temporal:
+    start-workers: true
+
+# Marks this process as a worker so the API-only beans (status collector, load
+# generator) stay in the primary and do not run once per worker.
+demo:
+  role: worker
