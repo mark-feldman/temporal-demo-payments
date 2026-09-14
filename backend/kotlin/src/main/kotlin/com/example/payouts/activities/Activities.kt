@@ -47,6 +47,18 @@ interface BankActivities {
      */
     @ActivityMethod
     fun pollBankStatus(request: BankStatusProbeRequest): BankStatusProbeResponse
+
+    /**
+     * Settles a low-value instruction in one call: the rail answers COMPLETED or REJECTED
+     * inline, so the workflow never waits on a callback.
+     *
+     * The 80/20 split lives here rather than in the workflow on purpose. Activity results are
+     * recorded in Event History and activities are not re-executed on replay, so a coin toss
+     * inside an activity replays as whatever it returned the first time. The same toss in
+     * workflow code would come up differently on every replay and break determinism.
+     */
+    @ActivityMethod
+    fun settleWithBank(request: BankSettlementRequest): BankSettlementResponse
 }
 
 @ActivityInterface

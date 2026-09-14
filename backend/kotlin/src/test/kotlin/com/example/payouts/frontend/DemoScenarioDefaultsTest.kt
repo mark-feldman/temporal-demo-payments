@@ -4,6 +4,7 @@ import com.example.payouts.api.StartPayoutBody
 import com.example.payouts.model.domain.ApprovalThresholds
 import com.example.payouts.model.domain.ApprovalTier
 import com.example.payouts.model.domain.BankStatus
+import com.example.payouts.model.domain.SettlementThresholds
 import com.example.payouts.scenario.Behavior
 import com.example.payouts.workflow.DEMO_MIN_ATTEMPTS
 import org.junit.jupiter.api.Test
@@ -92,6 +93,27 @@ class DemoScenarioDefaultsTest {
                 "$it is not about approval, but $amount minor units is " +
                     "${ApprovalThresholds.tierFor(amount)} -- it would park on a signal before " +
                     "reaching what it means to show",
+            )
+        }
+    }
+
+    @Test
+    fun `every manual scenario still waits for a bank callback`() {
+        // Low-value payouts settle inline through settleWithBank: no wait, no timer, and
+        // therefore no Bank: completed / rejected / unknown buttons in the UI, because those
+        // follow the live business status. The five manual scenarios exist to be driven by
+        // hand, so every one of them has to stay ABOVE the sync threshold -- this is the
+        // constraint that fixed that threshold at \$100, under the \$250 they start at.
+        //
+        // Scenario 5 is the sharpest case: a low-value unknown-callback payout would settle
+        // inline and never reach the polling path it exists to demonstrate.
+        defaultsByScenario().forEach {
+            val amount = requireNotNull(it.long("amountMinor")) { "$it has no amountMinor" }
+            assertTrue(
+                !SettlementThresholds.settlesSynchronously(amount),
+                "$it starts at $amount minor units, below the " +
+                    "${SettlementThresholds.SYNC_BELOW_MINOR} sync-settlement threshold, so the " +
+                    "bank would answer inline and the scenario's Bank buttons would never appear",
             )
         }
     }

@@ -200,6 +200,37 @@ class PayoutApiIntegrationTest {
         assertEquals("COMPLETED", awaitStatus(started.workflowId, BusinessStatus.COMPLETED)["status"])
     }
 
+    // ---- low-value payouts settle inline, with no callback at all ----
+
+    @Test
+    fun `a low-value payout resolves over HTTP without any signal being sent`() {
+        // Deliberately never signalled. Before the settlement split this test could not exist:
+        // the payout would sit out the 45s bank deadline and resolve by polling, ~67s later.
+        //
+        // What is asserted is the PATH, not the outcome. This runs the production activity,
+        // which settles 80/20, so pinning COMPLETED would be pinning a coin toss -- it passed
+        // once and then failed on the next run. Both outcomes are correct here; the unit suite
+        // covers each of them deterministically through the injected-failure seam.
+        val started = start(StartPayoutBody(scenario = "it-inline", amountMinor = 4_200))
+        val final = awaitStatus(started.workflowId, BusinessStatus.COMPLETED, BusinessStatus.FAILED)
+
+        @Suppress("UNCHECKED_CAST")
+        val history = final["history"] as List<String>
+        assertTrue(
+            history.any { it.startsWith("SETTLING_WITH_BANK") },
+            "the inline path has to be visible in the timeline, not merely implied: $history",
+        )
+        assertTrue(
+            history.none { it.startsWith("AWAITING_BANK_CONFIRMATION") },
+            "a low-value payout must not park on a callback: $history",
+        )
+        // Whichever way the roll went, the record has to say so coherently.
+        when (final["status"]) {
+            "COMPLETED" -> assertEquals("NONE", final["failureCategory"])
+            else -> assertEquals("BANK_REJECTED", final["failureCategory"], "a refusal, not some other failure")
+        }
+    }
+
     // ---- 5: transient failure produces retries ----
 
     @Test

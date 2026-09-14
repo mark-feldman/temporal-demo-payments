@@ -119,6 +119,28 @@ K=$(status "$W" | python3 -c 'import sys,json;print(",".join(sorted(json.load(sy
 [[ "$K" == *approvalTier* && "$K" == *failureCategory* && "$K" == *railAttempts* ]] \
   && ok "7d status response always carries every field" || bad "7d contract shape" "$K"
 
+# 9 -- how the bank confirms depends on the amount
+# Below $100 the rail answers inline: no callback is sent here, and none is needed. This also
+# pins the boundary from the other side -- test 2 uses 25000 and DOES park on the callback.
+#
+# The PATH is the contract, not the outcome. An inline settlement answers COMPLETED or
+# REJECTED and this implementation splits them 80/20, so asserting COMPLETED asserts a coin
+# toss -- which is exactly how this line first failed. A different implementation may pick a
+# different mix and still be correct.
+W=$(start '{"scenario":"ct-inline","amountMinor":4200}' | jqv "['workflowId']")
+S=$(await "$W" "COMPLETED,FAILED" 40)
+HIST=$(status "$W" | jqv "['history']")
+FC=$(status "$W" | jqv "['failureCategory']")
+INLINE=no
+[[ "$HIST" == *SETTLING_WITH_BANK* && "$HIST" != *AWAITING_BANK_CONFIRMATION* ]] && INLINE=yes
+# Whichever way it went, the record has to be coherent: settled means no failure, refused
+# means BANK_REJECTED and nothing else.
+COHERENT=no
+[[ ( "$S" == "COMPLETED" && "$FC" == "NONE" ) || ( "$S" == "FAILED" && "$FC" == "BANK_REJECTED" ) ]] && COHERENT=yes
+[[ "$INLINE" == "yes" && "$COHERENT" == "yes" ]] \
+  && ok "9 a low-value payout settles inline, with no callback ($S)" \
+  || bad "9 inline settlement" "inline=$INLINE coherent=$COHERENT state=$S category=$FC"
+
 # 8 -- metrics endpoint
 M=$(curl -s "$BASE/actuator/prometheus")
 [[ "$M" == *payout_workflows_started_total* && "$M" == *temporal_* ]] \

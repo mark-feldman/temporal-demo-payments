@@ -100,6 +100,21 @@ data class BankStatusProbeRequest(val payoutId: String, val bankReference: Strin
 @Serializable
 data class BankStatusProbeResponse(val status: BankStatus)
 
+@Serializable
+data class BankSettlementRequest(
+    val payoutId: String,
+    val bankReference: String,
+    val idempotencyKey: String,
+)
+
+/**
+ * The bank's inline answer. Always COMPLETED or REJECTED -- never ACCEPTED or UNKNOWN, which
+ * are the out-of-band states and mean "ask again later". A synchronous settlement that could
+ * answer "don't know" would just be the callback path with extra steps.
+ */
+@Serializable
+data class BankSettlementResponse(val status: BankStatus)
+
 // ---- notification ----
 
 @Serializable

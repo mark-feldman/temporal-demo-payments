@@ -275,6 +275,17 @@ class RecordingActivities(
             BankStatusProbeResponse(status = BankStatus.valueOf(config.resolvedStatus))
         }
 
+    /**
+     * The inline settlement. Deterministic here, unlike production's 80/20 roll: a test that
+     * wants a refusal stages `behavior=REJECTED, step=settleWithBank` and gets it from
+     * ScenarioStore.maybeFail, which is the same seam every other injected failure uses.
+     * Rolling dice in the fake would make the two outcomes untestable rather than realistic.
+     */
+    override fun settleWithBank(request: BankSettlementRequest) =
+        run("settleWithBank", request.payoutId, request.idempotencyKey) {
+            BankSettlementResponse(status = BankStatus.COMPLETED)
+        }
+
     override fun notify(request: NotifyRequest) =
         run("notify", request.payoutId) { NotifyResponse(sent = true) }
 

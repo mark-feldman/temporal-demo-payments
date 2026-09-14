@@ -137,6 +137,26 @@ class BankActivitiesImpl(
             }
             BankStatusProbeResponse(status = BankStatus.valueOf(config.resolvedStatus))
         }
+
+    /**
+     * The inline answer for a low-value instruction: settled or refused, decided here and
+     * now. [SYNC_SETTLEMENT_SUCCESS_PCT] of them settle.
+     *
+     * `mock.run` puts this behind the same failure injection as every other step, so a
+     * scenario staged with `behavior=REJECTED, step=settleWithBank` still throws a
+     * non-retryable BankRejected instead of rolling the dice -- which is how the tests keep
+     * this deterministic without a second configuration knob.
+     */
+    override fun settleWithBank(request: BankSettlementRequest) =
+        mock.run("settleWithBank", request.payoutId) {
+            val settled = Random.nextInt(100) < SYNC_SETTLEMENT_SUCCESS_PCT
+            BankSettlementResponse(status = if (settled) BankStatus.COMPLETED else BankStatus.REJECTED)
+        }
+
+    private companion object {
+        /** Pre-canned 80/20. Rolled in the activity, so it replays as whatever it returned. */
+        const val SYNC_SETTLEMENT_SUCCESS_PCT = 80
+    }
 }
 
 @Component

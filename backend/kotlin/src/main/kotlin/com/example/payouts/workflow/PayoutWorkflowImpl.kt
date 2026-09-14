@@ -8,6 +8,7 @@ import io.temporal.activity.ActivityOptions
 import io.temporal.activity.setRetryOptions
 import io.temporal.common.SearchAttributeKey
 import io.temporal.failure.ActivityFailure
+import io.temporal.failure.ApplicationFailure
 import io.temporal.spring.boot.WorkflowImpl
 import io.temporal.workflow.Saga
 import io.temporal.common.RetryOptions
@@ -169,6 +170,24 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         },
     )
 
+    /**
+     * Inline settlement for a low-value instruction. A SEPARATE stub from `bank` because the
+     * retry policy means something different here: `bank` retries in order to poll, whereas a
+     * settlement that comes back REJECTED is a final answer returned as a value, not an error.
+     * `BankRejected` is listed as non-retryable anyway, so a scenario that injects a refusal
+     * at this step fails once rather than seven to ten times.
+     */
+    private val bankSettlement = Workflow.newActivityStub(
+        BankActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(10))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("Settle low-value instruction with the bank")
+            setRetryOptions(demoRetry().toBuilder().setDoNotRetry("BankRejected").build())
+        },
+    )
+
     /** Capped at 3 so a dead notifier cannot hold a payout in COMPENSATING forever. */
     private val notifier = Workflow.newActivityStub(
         NotificationActivities::class.java,
@@ -250,11 +269,19 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             bankReference = submission.bankReference
             advance(BusinessStatus.SUBMITTED_TO_BANK, "Bank accepted instruction ${submission.bankReference}")
 
-            val reported = when (val first = awaitBankStatus()) {
-                // No answer, or an ambiguous one. Ask the bank directly rather than
-                // escalating to a human: the retry policy on the poll stub does the polling.
-                BankStatus.UNKNOWN, BankStatus.ACCEPTED -> pollBankUntilResolved(request)
-                else -> first
+            // How the bank confirms depends on the size of the payout, and the decision comes
+            // from the workflow's own input so it replays identically. Low-value instructions
+            // are answered inline by a single activity; larger ones are confirmed out of
+            // band, which is the durable-wait-on-a-signal path.
+            val reported = if (settlesInline(request)) {
+                settleWithBankInline(request)
+            } else {
+                when (val first = awaitBankStatus()) {
+                    // No answer, or an ambiguous one. Ask the bank directly rather than
+                    // escalating to a human: the retry policy on the poll stub does the polling.
+                    BankStatus.UNKNOWN, BankStatus.ACCEPTED -> pollBankUntilResolved(request)
+                    else -> first
+                }
             }
             when (reported) {
                 BankStatus.COMPLETED -> complete(request)
@@ -327,10 +354,73 @@ class PayoutWorkflowImpl : PayoutWorkflow {
                 true
             }
             else -> {
-                failure = FailureCategory.VALIDATION
+                failure = FailureCategory.APPROVAL_DECLINED
                 false
             }
         }
+    }
+
+    /**
+     * Whether this payout takes the inline-settlement path -- **patched**, not simply switched.
+     *
+     * Splitting the bank confirmation by amount replaced one branch with another, which is the
+     * textbook way to break replay: an execution that already recorded the old branch produces
+     * different commands under the new code, and Temporal blocks it rather than failing it
+     * loudly. Verified rather than assumed, by replaying a real exported history against the
+     * unpatched code:
+     *
+     *     NonDeterministicException: [TMPRL1100] Failure handling event 37 of type
+     *     'EVENT_TYPE_TIMER_STARTED' during replay. Event 37 of type EVENT_TYPE_TIMER_STARTED
+     *     does not match command type COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK
+     *
+     * -- the recorded bank deadline timer, where the new code wanted to schedule settleWithBank.
+     * 482 executions were in flight below the threshold at the time.
+     *
+     * `Workflow.getVersion` records a marker for new executions and returns DEFAULT_VERSION
+     * when replaying a history that has none, so pre-change executions keep the wait they
+     * already committed to and new ones settle inline.
+     *
+     * Two things about the shape:
+     *
+     *  - The version is consulted only AFTER the threshold test, so no marker is written on the
+     *    majority path. That is safe because the test reads `request.amount`, which is recorded
+     *    in WorkflowExecutionStarted and therefore identical on every replay -- the decision to
+     *    consult the marker is itself deterministic. It also makes the threshold constant safe
+     *    to change: raise it, and an in-flight payout that was above the old boundary finds no
+     *    marker and stays on the path it started.
+     *  - The Java SDK does NOT record `TemporalChangeVersion` for you, unlike Python and
+     *    TypeScript, so it is upserted by hand. That is what makes the next two steps of the
+     *    patch answerable from a query rather than a guess:
+     *
+     *        temporal workflow list --query 'TemporalChangeVersion IS NULL AND ExecutionStatus="Running"'
+     *
+     *    When no pre-patch execution is left, `minSupported` moves to 1 and the old branch
+     *    goes; when no marker is left, the `getVersion` call itself goes.
+     */
+    private fun settlesInline(request: ProcessPayoutRequest): Boolean {
+        if (!SettlementThresholds.settlesSynchronously(request.amount.amountMinor)) return false
+        val version = Workflow.getVersion(INLINE_SETTLEMENT_CHANGE, Workflow.DEFAULT_VERSION, INLINE_SETTLEMENT_VERSION)
+        if (version == Workflow.DEFAULT_VERSION) return false
+        Workflow.upsertTypedSearchAttributes(
+            TEMPORAL_CHANGE_VERSION.valueSet(listOf("$INLINE_SETTLEMENT_CHANGE-$version")),
+        )
+        return true
+    }
+
+    /**
+     * Settle inline. One activity call, one answer, no timer and no signal -- so a low-value
+     * payout never spends the 45s bank deadline, and the state it passes through says which
+     * path it took rather than leaving that to be inferred from the absence of a wait.
+     */
+    private fun settleWithBankInline(request: ProcessPayoutRequest): BankStatus {
+        advance(BusinessStatus.SETTLING_WITH_BANK, "Low-value payout - the bank answers inline")
+        return bankSettlement.settleWithBank(
+            BankSettlementRequest(
+                payoutId = request.payoutId,
+                bankReference = bankReference.orEmpty(),
+                idempotencyKey = request.idempotencyKey,
+            ),
+        ).status
     }
 
     private fun awaitBankStatus(): BankStatus {
@@ -383,6 +473,11 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         if (failure == FailureCategory.NONE) {
             failure = when {
                 e is BankStatusUnresolved -> FailureCategory.UNKNOWN_BANK_STATUS
+                // Matched on the failure TYPE rather than the message. An inline settlement
+                // that the bank refuses throws ApplicationFailure("BankRejected"), whose
+                // message says "bank" and not "Rail", so the substring check below filed it
+                // under VALIDATION -- found by the test for that path, not by reading.
+                failureTypeOf(e) == "BankRejected" -> FailureCategory.BANK_REJECTED
                 e is ActivityFailure && e.cause?.message?.contains("Rail") == true -> FailureCategory.RAIL_PERMANENT
                 else -> FailureCategory.VALIDATION
             }
@@ -414,6 +509,10 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             message = e.message ?: failure.name,
         )
     }
+
+    /** The ApplicationFailure type an activity failed with, or null if it was not one. */
+    private fun failureTypeOf(e: Exception): String? =
+        ((e as? ActivityFailure)?.cause as? ApplicationFailure)?.type
 
     private fun advance(next: BusinessStatus, detail: String) {
         status = next
@@ -455,6 +554,17 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         RuntimeException("bank never confirmed and polling was exhausted")
 
     private companion object {
+        /**
+         * The patch id, and the only version of it. NEVER rename this string: the marker in
+         * every history already written is keyed on it, and a rename makes those histories
+         * look unpatched.
+         */
+        const val INLINE_SETTLEMENT_CHANGE = "inline-settlement-for-low-value"
+        const val INLINE_SETTLEMENT_VERSION = 1
+
+        /** Server-defined, already registered -- checked with `temporal operator search-attribute list`. */
+        val TEMPORAL_CHANGE_VERSION = SearchAttributeKey.forKeywordList("TemporalChangeVersion")
+
         val PAYOUT_ID = SearchAttributeKey.forKeyword("payoutId")
         val CUSTOMER_ID = SearchAttributeKey.forKeyword("customerId")
         val RAIL = SearchAttributeKey.forKeyword("rail")

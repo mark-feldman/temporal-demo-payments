@@ -268,7 +268,10 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
         <!-- Rail, region and currency are supplied by the server defaults. They were controls
              once, but none of them changed a branch, a timeout or an outcome, and two inert
              dropdowns are worse than none in a demo that argues everything on screen is real. -->
-        <${Field} label="Amount (minor units, USD)">
+        <!-- The amount is not just a number on the screen: under 10000 minor the rail
+             answers inline and there is no callback to signal, so the Bank buttons below
+             will not appear. Scenario defaults all sit above that deliberately. -->
+        <${Field} label="Amount (minor units, USD) — under 10000 settles inline, no callback">
           <input class="input" type="number" value=${amount} onInput=${e => setAmount(e.target.value)} />
         <//>
         ${scenario.pollOutcomes && html`
