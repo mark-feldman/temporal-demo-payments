@@ -14,7 +14,8 @@ import io.temporal.client.newWorkflowStub
 import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
-import java.util.concurrent.atomic.AtomicLong
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 data class StartPayoutBody(
     val scenario: String = "successful",
@@ -34,6 +35,22 @@ data class StartPayoutBody(
     val pollingNeverResolves: Boolean = false,
 )
 
+/**
+ * `po-` plus the first 16 hex characters of a UUIDv7: the 48-bit millisecond timestamp, the
+ * version nibble, and the 12-bit counter that keeps ids minted in the same millisecond
+ * distinct and in order.
+ *
+ * Truncated, so it is no longer a UUID -- it is short enough to read off the screen, which the
+ * full 36 characters are not. What matters is that it comes from the clock rather than a
+ * per-process counter: a restart mints fresh ids instead of replaying a range, and the scenario
+ * store is keyed on this, so a repeated id hands a new payout the old one's failure injection.
+ *
+ * Minted here, in the API, before the workflow starts. Inside workflow code this would be
+ * non-deterministic; `Workflow.randomUUID()` is the equivalent there.
+ */
+@OptIn(ExperimentalUuidApi::class)
+internal fun newPayoutId(): String = "po-" + Uuid.generateV7().toHexString().take(16)
+
 data class StartPayoutResult(
     val payoutId: String,
     val workflowId: String,
@@ -49,11 +66,10 @@ class PayoutController(
     private val metrics: BusinessMetrics,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-    private val seq = AtomicLong(System.currentTimeMillis() % 100_000)
 
     @PostMapping("/payouts")
     fun start(@RequestBody body: StartPayoutBody): StartPayoutResult {
-        val payoutId = "po-%06d".format(seq.incrementAndGet())
+        val payoutId = newPayoutId()
         val workflowId = "payout-${body.scenario}-$payoutId"
 
         scenarios.put(
