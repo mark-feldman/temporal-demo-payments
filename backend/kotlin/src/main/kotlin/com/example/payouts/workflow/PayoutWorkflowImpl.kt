@@ -15,6 +15,18 @@ import io.temporal.common.RetryOptions
 import io.temporal.workflow.Workflow
 import java.time.Duration
 
+/**
+ * The attempt cap on the demo retry policy, drawn per workflow instance so no two executions
+ * retry the same number of times.
+ *
+ * The minimum is a constraint on the demo as much as on the policy. A failure-injection count
+ * of [DEMO_MIN_ATTEMPTS] or more exhausts the policy on *some* executions and not others,
+ * which turns the retry scenario into a compensation scenario at random. `app.js` picks those
+ * counts, so `DemoScenarioDefaultsTest` holds it to this bound.
+ */
+const val DEMO_MIN_ATTEMPTS = 7
+const val DEMO_MAX_ATTEMPTS = 10
+
 /** Registered by @WorkflowImpl; deliberately NOT a Spring bean -- Temporal creates one per execution. */
 @WorkflowImpl(taskQueues = [TASK_QUEUE])
 class PayoutWorkflowImpl : PayoutWorkflow {
@@ -31,13 +43,13 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     /**
      * Deliberately slow and persistent so retries are legible rather than instantaneous:
-     * 7-10 attempts, 1s initial, x1.1, capped at 20s.
+     * [DEMO_MIN_ATTEMPTS]-[DEMO_MAX_ATTEMPTS] attempts, 1s initial, x1.1, capped at 20s.
      */
     private fun demoRetry(): io.temporal.common.RetryOptions = RetryOptions {
         setInitialInterval(Duration.ofSeconds(1))
         setBackoffCoefficient(1.1)
         setMaximumInterval(Duration.ofSeconds(20))
-        setMaximumAttempts(7 + rng.nextInt(4))
+        setMaximumAttempts(DEMO_MIN_ATTEMPTS + rng.nextInt(DEMO_MAX_ATTEMPTS - DEMO_MIN_ATTEMPTS + 1))
     }
 
     // ---- mutable workflow state, read by the Query ----

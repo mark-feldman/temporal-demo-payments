@@ -61,15 +61,21 @@ signal "$W" bank-status '{"status":"COMPLETED"}'
 W=$(start '{"scenario":"ct-retry","amountMinor":25000,"behavior":"FAIL_TRANSIENT","transientFailures":2}' | jqv "['workflowId']")
 await "$W" "AWAITING_BANK_CONFIRMATION" 30 >/dev/null
 A=$(status "$W" | jqv "['railAttempts']")
-[[ "${A:-0}" -gt 1 ]] && ok "5 transient failure produces retries (attempt=$A)" || bad "5 retries" "attempt=$A"
+# Exactly three, not "more than one": transientFailures=2 means two failures then the attempt
+# that lands, so an implementation that failed once and an implementation that failed five
+# times are both wrong, and `-gt 1` could not tell either of them from correct.
+[[ "${A:-0}" -eq 3 ]] && ok "5 transient failure produces retries (attempt=$A)" || bad "5 retries" "attempt=$A, expected 3"
 signal "$W" bank-status '{"status":"COMPLETED"}'
 
 # 6 -- permanent failure produces compensation
 W=$(start '{"scenario":"ct-permanent","amountMinor":25000,"behavior":"FAIL_PERMANENT"}' | jqv "['workflowId']")
 S=$(await "$W" "FAILED,CANCELLED" 30)
 HIST=$(status "$W" | jqv "['history']")
-[[ "$S" == "FAILED" && "$HIST" == *COMPENSAT* ]] \
-  && ok "6 permanent failure triggers compensation" || bad "6 compensation" "$S / $HIST"
+# failureCategory is part of the assertion, not decoration: "failed and compensated" is also
+# true of a payout that failed for an entirely different reason.
+FC=$(status "$W" | jqv "['failureCategory']")
+[[ "$S" == "FAILED" && "$FC" == "RAIL_PERMANENT" && "$HIST" == *COMPENSAT* ]] \
+  && ok "6 permanent failure triggers compensation" || bad "6 compensation" "$S / $FC / $HIST"
 
 # 7 -- no callback: the workflow polls the bank and resolves itself, no ops review
 W=$(start '{"scenario":"ct-poll-ok","amountMinor":25000,"behavior":"ACCEPTED_NO_CALLBACK","pollsBeforeResolution":2,"resolvedStatus":"COMPLETED"}' | jqv "['workflowId']")

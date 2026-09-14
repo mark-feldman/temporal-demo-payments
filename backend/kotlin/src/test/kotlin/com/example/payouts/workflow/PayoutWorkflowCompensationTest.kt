@@ -9,11 +9,13 @@ import com.example.payouts.scenario.Behavior
 import com.example.payouts.scenario.ScenarioConfig
 import com.example.payouts.support.PayoutWorkflowTestBase
 import com.example.payouts.support.payoutRequest
+import io.temporal.api.enums.v1.EventType
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * Retries and the saga unwind.
@@ -127,6 +129,44 @@ class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
             "three failures then the attempt that succeeds",
         )
         assertContains(statesOf(stub), "COMPENSATED")
+    }
+
+    @Test
+    fun `the retry policies actually scheduled are the ones the demo claims`() {
+        scenarios.put("po-000001", ScenarioConfig(behavior = Behavior.FAIL_PERMANENT, step = "submitToRail"))
+        startWorker()
+        val stub = newStub("compensation-retry-policy")
+        start(stub, payoutRequest(amountMinor = 25_000))
+        resultOf(stub)
+
+        // Asserted against history rather than against the options object, because the options
+        // are built inside the workflow and the scheduled policy is the only version that
+        // matters. RetryProfiles.COMPENSATION pins these same properties on an object nothing
+        // schedules, so it cannot see a cap added to the stubs in PayoutWorkflowImpl.
+        val scheduled = client.fetchHistory("compensation-retry-policy").history.eventsList
+            .filter { it.eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED }
+            .associate { it.activityTaskScheduledEventAttributes.activityType.name to it.activityTaskScheduledEventAttributes }
+
+        // 0 on the getter means UNSET, which is unlimited -- not "zero attempts". A
+        // compensation that gives up leaves money reserved against a failed payout.
+        listOf("ReleaseReservedFunds", "ReverseRailInstruction").forEach { activity ->
+            val attributes = scheduled[activity] ?: fail("no $activity was scheduled: ${scheduled.keys}")
+            assertEquals(
+                0,
+                attributes.retryPolicy.maximumAttempts,
+                "$activity must be scheduled with maximumAttempts UNSET; setting it to 0 " +
+                    "explicitly means 'use the default', which is the trap this guards",
+            )
+        }
+
+        // And the contrast: the business activities ARE capped, at the randomised budget the
+        // scenario amounts in app.js are checked against.
+        val rail = scheduled["SubmitToRail"] ?: fail("no SubmitToRail was scheduled: ${scheduled.keys}")
+        assertTrue(
+            rail.retryPolicy.maximumAttempts in DEMO_MIN_ATTEMPTS..DEMO_MAX_ATTEMPTS,
+            "the demo policy draws $DEMO_MIN_ATTEMPTS-$DEMO_MAX_ATTEMPTS attempts per " +
+                "execution, but this run scheduled ${rail.retryPolicy.maximumAttempts}",
+        )
     }
 
     @Test
