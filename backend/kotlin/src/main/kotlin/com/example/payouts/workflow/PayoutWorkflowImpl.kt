@@ -293,9 +293,17 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         // signal and the timer both sit in history until one comes back, and await reports a
         // timeout even though the approval genuinely arrived first. Ordering the two through
         // event callbacks answers that correctly and identically on every replay.
-        Workflow.newTimer(Duration.ofSeconds(approvalTimeoutSeconds()))
-            .thenApply { approvalDeadlinePassed = true }
+        //
+        // It has to be owned by a cancellation scope. await(timeout, cond) cancels its own
+        // internal timer; a bare newTimer does not, and an uncancelled one is left dangling
+        // in history as a TimerStarted with nothing resolving it.
+        val deadline = Workflow.newCancellationScope(Runnable {
+            Workflow.newTimer(Duration.ofSeconds(approvalTimeoutSeconds()))
+                .thenApply { approvalDeadlinePassed = true }
+        })
+        deadline.run()
         Workflow.await { approval != null || approvalDeadlinePassed }
+        deadline.cancel("approval decided")
 
         val decision = approval
         return when {
@@ -316,10 +324,14 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     private fun awaitBankStatus(): BankStatus {
         advance(BusinessStatus.AWAITING_BANK_CONFIRMATION, "Waiting for bank payment status")
-        // Same ordering argument as the approval wait.
-        Workflow.newTimer(Duration.ofSeconds(bankCallbackTimeoutSeconds()))
-            .thenApply { bankDeadlinePassed = true }
+        // Same ordering argument, and the same need to own the timer.
+        val deadline = Workflow.newCancellationScope(Runnable {
+            Workflow.newTimer(Duration.ofSeconds(bankCallbackTimeoutSeconds()))
+                .thenApply { bankDeadlinePassed = true }
+        })
+        deadline.run()
         Workflow.await { bankStatus != null || bankDeadlinePassed }
+        deadline.cancel("bank status received")
         return bankStatus ?: BankStatus.UNKNOWN
     }
 
