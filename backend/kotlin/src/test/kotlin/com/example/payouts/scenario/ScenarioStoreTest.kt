@@ -168,6 +168,33 @@ class ScenarioStoreTest {
     }
 
     @Test
+    fun `a reused payout id gets the scenario staged now, not the one it replaced`() {
+        val file = tmp.resolve("reuse-store.json")
+        val api = scenarioStoreAt(file)
+        // An earlier run staged this id to fail permanently.
+        api.put("po-044916", ScenarioConfig(behavior = Behavior.FAIL_PERMANENT))
+
+        // A worker loads that file, so the id is already in its map.
+        val worker = scenarioStoreAt(file)
+        assertEquals(Behavior.FAIL_PERMANENT, worker.get("po-044916").behavior)
+
+        // The payout id counter is seeded from the clock, so ids come round again after a
+        // restart. This time the id belongs to a payout staged to pass.
+        api.put("po-044916", ScenarioConfig(behavior = Behavior.PASS))
+        Files.setLastModifiedTime(
+            file,
+            FileTime.fromMillis(Files.getLastModifiedTime(file).toMillis() + 1_000),
+        )
+
+        assertEquals(
+            Behavior.PASS,
+            worker.get("po-044916").behavior,
+            "the worker already held this id, so a refresh that ran only for missing keys " +
+                "served the previous run's config -- a payout staged to pass failed instead",
+        )
+    }
+
+    @Test
     fun `all exposes what has been staged and clear empties it`() {
         val store = scenarioStoreIn(tmp)
         store.put("po-1", ScenarioConfig(behavior = Behavior.FAIL_TRANSIENT))

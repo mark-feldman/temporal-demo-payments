@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.exists
 
@@ -74,8 +75,14 @@ class ScenarioStore {
         persist()
     }
 
+    /**
+     * Always checks the file's mtime first. Refreshing only when the key is absent served a
+     * stale config whenever a payout id was reused: the counter is seeded from the clock, so
+     * ids repeat across restarts, and a worker holding an entry from a previous run never
+     * looked again. A PASS payout then failed with whatever the old entry said.
+     */
     fun get(payoutId: String): ScenarioConfig {
-        if (!configs.containsKey(payoutId)) reloadIfChanged()
+        reloadIfChanged()
         return configs[payoutId] ?: ScenarioConfig()
     }
 
@@ -119,9 +126,16 @@ class ScenarioStore {
         }
     }
 
+    /**
+     * Written to a sibling file and moved into place, so a worker reading it concurrently sees
+     * either the old file or the new one, never a half-written one.
+     */
+    @Synchronized
     private fun persist() {
         runCatching {
-            Files.writeString(path, json.encodeToString(mapSerializer, configs.toMap()))
+            val tmp = path.resolveSibling("${'$'}{path.fileName}.tmp")
+            Files.writeString(tmp, json.encodeToString(mapSerializer, configs.toMap()))
+            Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
             loadedAtMs = Files.getLastModifiedTime(path).toMillis()
         }
             .onFailure { log.warn("Could not persist scenario store: {}", it.message) }
