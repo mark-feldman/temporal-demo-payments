@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -948,7 +948,7 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 24,
+        "w": 16,
         "x": 0,
         "y": 43
       },
@@ -988,6 +988,84 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Sync match rate",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "payout-demo-prom"
+      },
+      "description": "Share of tasks handed straight to a poller that was already waiting, rather than being persisted to the backlog and picked up later: poll_success_sync / poll_success, the self-hosted spelling of the Cloud ratio. Alert below 95%, prefer above 99%. A low rate together with a high schedule-to-start is the signature of a fleet that cannot keep up -- too few pollers, too few workers, or a thrashing sticky cache. Idle queues divide 0 by 0 and draw no line, which is why only queues with live traffic appear.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "payout-demo-prom"
+          },
+          "editorMode": "code",
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (taskqueue, task_type) (rate(poll_success_sync[5m]))\n/\nsum by (taskqueue, task_type) (rate(poll_success[5m]))",
+          "legendFormat": "{{taskqueue}} {{task_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.95
+              },
+              {
+                "color": "green",
+                "value": 0.99
+              }
+            ]
           }
         },
         "overrides": []
