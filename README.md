@@ -1,7 +1,7 @@
 # Payout orchestration — a Temporal demo
 
 A local, runnable payout orchestration demo built on Temporal. One payout workflow, five
-failure scenarios, a load simulator, and live worker + server metrics — all behind a single
+scenarios, a load simulator, and live worker + server metrics — all behind a single
 URL, so the workflow controls and the Temporal Web UI sit side by side in one window.
 
 **Backend:** Kotlin · Spring Boot · Temporal Java SDK 1.38.0
@@ -27,38 +27,40 @@ make test-unit       JUnit unit suite (no stack needed)
 make test-integration Spring + in-memory Temporal test server (no stack needed)
 make build           compile and run both JUnit suites
 make css             recompile the stylesheet
-make workers N=2     run N extra worker processes
-make workers-down    stop the extras, leave the primary running
-make workers-status  who is polling the task queue
+make workers N=3     scale the worker fleet to N JVMs (the cap is 10)
+make workers-kill    SIGKILL the most recent worker
+make workers-down    stop every worker; the API survives and can start replacements
+make workers-status  what is polling the task queue
 ```
 
 ### Scaling workers
 
-`make workers N=2` brings the fleet to three and can be run while load is in flight:
+`N` is the size of the whole fleet, not a number of extras, and it can be changed while load
+is in flight. The cap is 10, which is where the Prometheus target list ends.
 
 ```
-Workers polling the 'payouts' task queue:
-  UNVERSIONED  activity  TasksDispatchRate  55.1     # 29.8 with one worker
-  Pollers:
-    workflow  86860@host   now
-    workflow  81911@host   now
-    workflow  86856@host   now
+$ make workers N=3
+  3 of 10 worker(s) polling the payouts task queue
+    worker 1  pid 80008  :8091  alive
+    worker 2  pid 81910  :8092  alive
+    worker 3  pid 81916  :8093  alive
 ```
 
-Three workers means three JVMs, not three workers in one. A `WorkerFactory` keys its
-workers by task queue and returns the existing one for a repeated call, so extra instances
-cannot come from a single process. The script launches the same jar again with a different
-`--server.port`, since the primary already holds `:8081`; nothing else differs, and each
-process gets its own identity (`pid@host`) automatically.
+Three workers means three JVMs, not three workers in one. A `WorkerFactory` keys its workers
+by task queue and returns the existing one for a repeated call, so extra instances cannot come
+from a single process. The API supervises them and launches the same jar again on a different
+`--server.port` — worker N on `8090 + N`, since the API itself holds `:8081` — and each process
+gets its own identity (`pid@host`) automatically.
 
-They appear as separate rows under **Workers** on the task-queue page, and
-`make workers-down` stops them without touching the primary. Temporal keeps poller entries
-for a short while after a worker stops, so the count settles rather than dropping instantly.
+They appear as separate rows under **Workers** on the task-queue page. `make workers-kill`
+SIGKILLs the most recent one, `make workers-down` stops them all, and the API survives either,
+which is what lets it start replacements. Temporal keeps poller entries for a short while after
+a worker stops, so the count settles rather than dropping instantly.
 
-Prometheus scrapes `:8091` and `:8092` alongside the primary, so the extra workers show up
-on the dashboard individually: **Live worker instances** goes to 3, and **Worker task slots
-available** gains a series per instance. Those two targets read **DOWN** whenever the fleet
-is scaled to one — that means "not running", not "broken".
+Prometheus scrapes `:8091`–`:8100` alongside the API on `:8081`, so each worker shows up on the
+dashboard individually: **Live worker instances** tracks the fleet and **Worker task slots
+available** gains a series per instance. Targets above the current fleet size read **DOWN** —
+that means "not running", not "broken".
 
 One query detail worth knowing if you add panels: the Temporal server exposes
 `temporal_worker_task_slots_available` for its own internal system workers, so SDK panels
@@ -71,10 +73,10 @@ filter on `job="payout-demo-worker"`. It is the only metric name that overlaps.
 | Grafana | http://localhost:3000 |
 | Prometheus | http://localhost:9090 |
 
-**Prerequisites:** Docker, the Temporal CLI, and JDK 21. The repo pins the JDK twice — a
-`.mise.toml` for the shell and a Gradle toolchain for the build — because a machine default of
-a newer JDK will otherwise be picked up silently, and Kotlin + Spring Boot on a brand-new JDK
-is not a safe assumption.
+**Prerequisites:** Docker, JDK 21, and Temporal CLI 1.8.3 — the CLI version determines the
+bundled Server and Web UI. Any JDK 21 will do: the build discovers one rather than requiring a
+particular install location, and the CLI is taken from `PATH`. `make preflight` prints what it
+resolved, and `make start` refuses to run on the wrong CLI or without a JDK 21.
 
 ---
 
@@ -84,13 +86,13 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
 
 1. **Successful payout** — the baseline. Validate → reserve → FX → select rail → submit →
    confirm → complete. Rail, region and currency are fixed server-side rather than exposed as
-   controls: none of them changed an outcome, and the screen space is better spent on the
-   Temporal pane.
+   controls.
 2. **Transient failure + retry** — the rail times out twice, then accepts, on the same
    idempotency key. There is no retry loop in the code; the policy is declarative.
 3. **Permanent failure + compensation** — a non-retryable rejection triggers saga
-   compensation. The compensation activity retries indefinitely by design: giving up would
-   strand the money.
+   compensation, in reverse registration order. The compensation activities are scheduled with
+   no attempt cap and a flat 5s backoff, bounded only by a one-hour schedule-to-close: giving
+   up early would strand the money.
 4. **Human approval + timeout** — the workflow blocks durably on a signal. Kill the whole
    application and it is still waiting when the process returns.
 5. **Unknown bank status** — the bank accepted an instruction and never confirmed. Rather than
@@ -115,8 +117,7 @@ rather than Temporal's own Workers view, deliberately: the task-queue page is sc
 server's internal `temporal-sys-per-ns-tq` worker, so killing one of yours takes the count from
 3 to 2 rather than 2 to 1 — avoidable confusion during the worker-recovery demo.
 
-That top-level **Workers** view only exists from Web UI ~2.50; on 2.45.3 there was none, and
-the task-queue page was the only place workers appeared. **Deployments** is a different thing
+The top-level **Workers** view exists from Web UI 2.50. **Deployments** is a different thing
 again — Worker Deployments, i.e. versioning.
 
 ---
@@ -147,6 +148,27 @@ resolve unchanged — at the cost of one rule: every route this app adds must li
 
 ## Things worth knowing if you extend this
 
+**How the bank confirms is chosen by the amount, and that branch is versioned.** Below
+`SettlementThresholds.SYNC_BELOW_MINOR` ($100) the rail answers inside the `settleWithBank`
+activity: no signal, no 45s timer, `SETTLING_WITH_BANK` in the timeline. At or above it the
+workflow waits durably on the callback. Every demo scenario starts above the threshold, so the
+inline path is exercised by the load simulator rather than by the buttons.
+
+Replacing one branch with another is the standard way to break replay, so
+`Workflow.getVersion("inline-settlement-for-low-value", ...)` gates it and executions started
+before the change find no marker and keep the wait they committed to. The version is consulted
+*after* the amount test, so no marker is written on the majority path. The Java SDK does not
+record `TemporalChangeVersion` itself, so the workflow upserts it by hand, which turns retiring
+the patch into a query:
+
+```bash
+temporal workflow list --query 'TemporalChangeVersion IS NULL AND ExecutionStatus="Running"'
+```
+
+`src/test/resources/histories/` holds a real pre-change execution that fails to replay without
+the gate, and `PayoutWorkflowReplayTest` replays whatever is dropped in there against the
+current workflow code. That is the guard for a change that would break runs already in flight.
+
 **`spring.temporal.connection.target` must not be `local`.** The starter special-cases that
 value and calls `WorkflowServiceStubs.newLocalServiceStubs()`, which silently discards the
 metrics scope *and* the stub customizers. Spelling out `127.0.0.1:7233` takes the normal path.
@@ -167,10 +189,20 @@ non-suspend because the Java SDK invokes them reflectively and cannot accept a `
 Inside the body it is ordinary coroutine code — `delay()`, never `Thread.sleep`. None of this
 touches determinism: activities are not re-executed on replay.
 
+**The dev server's throughput ceiling is SQLite's journal mode.** `temporal server start-dev`
+leaves the database in rollback-journal mode, where readers and writers are mutually exclusive
+— the signature is a read slower than a write. `scripts/start-temporal.sh` starts it with
+`--sqlite-pragma journal_mode=WAL` and raises `history.shardIOConcurrency` from its default of
+1, which is what lets the load simulator sustain roughly 45–50 payouts/s rather than building a
+backlog. Above that the constraint is the server retiring history tasks, not the size of the
+worker fleet: scaling workers up while executor slots sit idle does not help.
+
 **Business metrics come from the API layer**, never from workflow code, where a counter would
 double-count on every replay. `StatusCollector` derives them from a Temporal visibility query
 over the `businessStatus` search attribute — the same query you would type into the Temporal
-Web filter box.
+Web filter box. Only the states in `FINDABLE_STATUSES` publish that attribute, so those are the
+ones a query can filter on; dropping the rest changes the command stream, so it sits behind a
+second version marker, `visibility-milestones-only`.
 
 **Workflow IDs use `REJECT_DUPLICATE`.** The default `AllowDuplicate` permits a second payout
 once the first has *closed*, which is the wrong answer for a system that must not pay twice.
@@ -180,20 +212,24 @@ once the first has *closed*, which is the wrong answer for a system that must no
 ## Layout
 
 ```
-backend/kotlin/          Spring Boot app: API + worker + static assets, one process
+backend/kotlin/          Spring Boot app: API + worker + static assets, one jar
   src/main/kotlin/com/example/payouts/
-    app/                 payload converter, retry profiles, Temporal config
+    app/                 payload converter, Temporal config
     model/{domain,workflow,activity}/   one request/response pair per boundary
     workflow/            PayoutWorkflow + impl
-    activities/          five interfaces, trivial mocks (delay, log, canned result)
+    activities/          six interfaces, trivial mocks (delay, log, canned result)
     api/                 REST controllers, metrics, status collector
+    scenario/            ScenarioStore — failure-injection config, shared with the workers
+    worker/              WorkerSupervisor — forks and supervises the worker JVMs
     simulation/          load generator
   src/test/              JUnit 5 unit suite — TestWorkflowEnvironment, time skipping
+    resources/histories/ exported histories, replayed against the current code
   src/integrationTest/   Spring Boot against the SDK's in-memory Temporal test server
   src/css/app.css        Tailwind source  (compiled output is committed)
 backend/contract/        the demo backend contract, for future SDK implementations
 config/                  Caddyfile, Prometheus, Grafana provisioning + dashboard
-scripts/                 start / stop / reset / seed / contract-test / scale-workers
+scripts/                 start / stop / reset / seed / contract-test / scale-workers,
+                         plus java-home + temporal-bin (tool resolution)
 tools/tailwindcss        vendored standalone binary, no npm anywhere
 ```
 
@@ -216,10 +252,17 @@ against the SDK's in-memory test server. Those are Java-SDK-specific and deliber
 of the cross-SDK contract.
 
 One test in the unit suite looks out of place and is not: every backend test supplies its own
-amount, so nothing proved that the amount a *scenario* starts with still crosses the approval
-threshold. `DemoScenarioDefaultsTest` reads the shipped `app.js` and checks each scenario's
-default against `ApprovalThresholds`, because a scenario that quietly drops below the boundary
-skips the human-approval branch without failing anything.
+request, so nothing covered the request the *UI* posts. `DemoScenarioDefaultsTest` reads the
+shipped `app.js`, reconstructs every body the five buttons can send, and checks each one
+against the production constants — amounts against `ApprovalThresholds`, every JSON key against
+`StartPayoutBody`, and the injected failure counts against the smallest retry cap the workflow
+can draw. Each of those fails silently in the browser: unknown JSON properties are dropped
+rather than rejected, so a stale key returns 200 and the scenario runs on defaults.
+
+`PayoutWorkflowReplayTest` is the other guard worth knowing about. It generates histories
+in-process, and also replays any `temporal workflow show --output json` export left in
+`src/test/resources/histories/`, which is how a change that would break in-flight executions
+gets caught before it ships.
 
 | Backend | SDK | Status |
 |---|---|---|

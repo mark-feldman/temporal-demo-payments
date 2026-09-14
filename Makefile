@@ -16,7 +16,7 @@ help:
 	@echo "make test-unit        JUnit unit tests      (no stack needed)"
 	@echo "make test-integration Spring + in-memory Temporal test server (no stack needed)"
 	@echo "make build            compile + both JUnit suites"
-	@echo "make workers N=10     extra worker JVMs, up to 10 (workers-kill / -down / -status)"
+	@echo "make workers N=3      scale the worker fleet to N JVMs, cap 10 (workers-kill / -down / -status)"
 	@echo "make css              compile Tailwind once  (css-watch to watch)"
 
 preflight:
