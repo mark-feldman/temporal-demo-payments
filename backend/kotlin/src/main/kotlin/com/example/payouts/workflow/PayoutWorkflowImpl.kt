@@ -12,6 +12,7 @@ import io.temporal.failure.ApplicationFailure
 import io.temporal.spring.boot.WorkflowImpl
 import io.temporal.workflow.Saga
 import io.temporal.common.RetryOptions
+import io.temporal.workflow.TimerOptions
 import io.temporal.workflow.Workflow
 import java.time.Duration
 
@@ -330,13 +331,17 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     // ---- internals ----
 
     private fun awaitApproval(request: ProcessPayoutRequest): Boolean {
-        advance(BusinessStatus.AWAITING_APPROVAL, "Waiting for $approvalTier approval")
+        val summary = "Waiting for $approvalTier approval"
+        advance(BusinessStatus.AWAITING_APPROVAL, summary)
         // An explicit timer, not await's built-in timeout: the signal and the timer are
         // ordered by which callback ran first, which replays identically. The timer is owned
         // by a cancellation scope because a bare newTimer is not cancelled by await, and an
         // uncancelled one stays in history as an unresolved TimerStarted.
         val deadline = Workflow.newCancellationScope(Runnable {
-            Workflow.newTimer(Duration.ofSeconds(approvalTimeoutSeconds()))
+            Workflow.newTimer(
+                Duration.ofSeconds(approvalTimeoutSeconds()),
+                TimerOptions.newBuilder().setSummary(summary).build(),
+            )
                 .thenApply { approvalDeadlinePassed = true }
         })
         deadline.run()
@@ -406,10 +411,14 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     }
 
     private fun awaitBankStatus(): BankStatus {
-        advance(BusinessStatus.AWAITING_BANK_CONFIRMATION, "Waiting for bank payment status")
+        val summary = "Waiting for bank payment status"
+        advance(BusinessStatus.AWAITING_BANK_CONFIRMATION, summary)
         // Ordered by callback like the approval wait, and the timer is owned the same way.
         val deadline = Workflow.newCancellationScope(Runnable {
-            Workflow.newTimer(Duration.ofSeconds(bankCallbackTimeoutSeconds()))
+            Workflow.newTimer(
+                Duration.ofSeconds(bankCallbackTimeoutSeconds()),
+                TimerOptions.newBuilder().setSummary(summary).build(),
+            )
                 .thenApply { bankDeadlinePassed = true }
         })
         deadline.run()
