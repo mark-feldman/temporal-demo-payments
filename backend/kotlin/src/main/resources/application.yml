@@ -32,8 +32,13 @@ spring:
         capacity:
           max-concurrent-workflow-task-executors: 200
           max-concurrent-activity-executors: 200
-          # Pollers autoscale rather than sitting at a fixed count. 20 is the CEILING under
-          # backlog, not a constant: idle workers hold 1-2 long polls instead of 40.
+          # Pollers autoscale rather than sitting at a fixed count. 50 is the CEILING under
+          # backlog, not a constant: idle workers hold 1-2 long polls instead of 100.
+          #
+          # Raised from 20 because dispatch was measured to scale linearly with poller count at
+          # a fixed per-delivery cost -- scaling 10 workers down to 4 cut activity pollers
+          # 200 -> 80 and dispatch 114 -> 59/s. Pollers are the dial that moves task delivery
+          # here; executor slots are 82-87% idle and are not.
           #
           # These are mutually exclusive with max-concurrent-workflow-task-pollers /
           # max-concurrent-activity-task-pollers -- setting both fails context startup at the
@@ -48,12 +53,12 @@ spring:
             poller-behavior-autoscaling:
               enabled: true
               min-concurrent-task-pollers: 2
-              max-concurrent-task-pollers: 20
+              max-concurrent-task-pollers: 50
           activity-task-pollers-configuration:
             poller-behavior-autoscaling:
               enabled: true
               min-concurrent-task-pollers: 1
-              max-concurrent-task-pollers: 20
+              max-concurrent-task-pollers: 50
         rate-limits:
           max-worker-activities-per-second: 300
 
