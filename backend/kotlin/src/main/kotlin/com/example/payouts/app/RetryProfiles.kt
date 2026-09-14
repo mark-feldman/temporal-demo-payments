@@ -13,11 +13,15 @@ import kotlin.time.toJavaDuration
  */
 object RetryProfiles {
 
+    /**
+     * Long enough to be legible. The workflow randomises maximumAttempts between 7 and 10 per
+     * instance via Workflow.newRandom, so no two executions retry the same number of times.
+     */
     val FAST: RetryOptions = RetryOptions {
-        setInitialInterval(500.milliseconds.toJavaDuration())
-        setBackoffCoefficient(1.5)
-        setMaximumInterval(3.seconds.toJavaDuration())
-        setMaximumAttempts(5)
+        setInitialInterval(1.seconds.toJavaDuration())
+        setBackoffCoefficient(1.1)
+        setMaximumInterval(20.seconds.toJavaDuration())
+        setMaximumAttempts(8)
     }
 
     val REALISTIC: RetryOptions = FAST.copy {

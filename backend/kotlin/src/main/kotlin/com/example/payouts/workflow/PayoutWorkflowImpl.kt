@@ -21,6 +21,25 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     private val log = Workflow.getLogger(javaClass)
 
+    /**
+     * Replay-safe RNG. kotlin.random.Random here would draw a different attempt cap on every
+     * replay and break determinism; Workflow.newRandom is seeded per workflow instance and
+     * replays identically. Workflow context is available during construction -- the activity
+     * stubs below rely on the same thing.
+     */
+    private val rng: java.util.Random = Workflow.newRandom()
+
+    /**
+     * Deliberately slow and persistent so retries are legible rather than instantaneous:
+     * 7-10 attempts, 1s initial, x1.1, capped at 20s.
+     */
+    private fun demoRetry(): io.temporal.common.RetryOptions = RetryOptions {
+        setInitialInterval(Duration.ofSeconds(1))
+        setBackoffCoefficient(1.1)
+        setMaximumInterval(Duration.ofSeconds(20))
+        setMaximumAttempts(7 + rng.nextInt(4))
+    }
+
     // ---- mutable workflow state, read by the Query ----
     private var status = BusinessStatus.RECEIVED
     private var step = "received"
@@ -45,22 +64,22 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private val validation = Workflow.newActivityStub(
         ValidationActivities::class.java,
         ActivityOptions {
-            setStartToCloseTimeout(Duration.ofSeconds(5))
-            setScheduleToCloseTimeout(Duration.ofSeconds(30))
+            setStartToCloseTimeout(Duration.ofSeconds(10))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
             setTaskQueue(TASK_QUEUE)
             setSummary("Validate payout request")
-            setRetryOptions { setMaximumAttempts(3); setDoNotRetry("ValidationFailure") }
+            setRetryOptions(demoRetry().toBuilder().setDoNotRetry("ValidationFailure").build())
         },
     )
 
     private val ledger = Workflow.newActivityStub(
         LedgerActivities::class.java,
         ActivityOptions {
-            setStartToCloseTimeout(Duration.ofSeconds(5))
-            setScheduleToCloseTimeout(Duration.ofMinutes(1))
+            setStartToCloseTimeout(Duration.ofSeconds(10))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
             setTaskQueue(TASK_QUEUE)
             setSummary("Ledger operation")
-            setRetryOptions { setMaximumAttempts(5); setDoNotRetry("InsufficientFunds") }
+            setRetryOptions(demoRetry().toBuilder().setDoNotRetry("InsufficientFunds").build())
         },
     )
 
@@ -68,7 +87,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private val compensationLedger = Workflow.newActivityStub(
         LedgerActivities::class.java,
         ActivityOptions {
-            setStartToCloseTimeout(Duration.ofSeconds(5))
+            setStartToCloseTimeout(Duration.ofSeconds(10))
             setScheduleToCloseTimeout(Duration.ofHours(1))
             setTaskQueue(TASK_QUEUE)
             setSummary("Release reserved funds")
@@ -97,11 +116,11 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private val fx = Workflow.newActivityStub(
         FxActivities::class.java,
         ActivityOptions {
-            setStartToCloseTimeout(Duration.ofSeconds(5))
-            setScheduleToCloseTimeout(Duration.ofSeconds(30))
+            setStartToCloseTimeout(Duration.ofSeconds(10))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
             setTaskQueue(TASK_QUEUE)
             setSummary("Check FX quote validity")
-            setRetryOptions { setMaximumAttempts(3); setDoNotRetry("FxQuoteExpired") }
+            setRetryOptions(demoRetry().toBuilder().setDoNotRetry("FxQuoteExpired").build())
         },
     )
 
@@ -109,10 +128,10 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         RailActivities::class.java,
         ActivityOptions {
             setStartToCloseTimeout(Duration.ofSeconds(10))
-            setScheduleToCloseTimeout(Duration.ofMinutes(2))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
             setTaskQueue(TASK_QUEUE)
             setSummary("Submit instruction to bank rail")
-            setRetryOptions(RetryProfiles.FAST.toBuilder().setDoNotRetry("RailRejected", "BankRejected").build())
+            setRetryOptions(demoRetry().toBuilder().setDoNotRetry("RailRejected", "BankRejected").build())
         },
     )
 
@@ -131,15 +150,11 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private val bank = Workflow.newActivityStub(
         BankActivities::class.java,
         ActivityOptions {
-            setStartToCloseTimeout(Duration.ofSeconds(5))
+            setStartToCloseTimeout(Duration.ofSeconds(10))
             setScheduleToCloseTimeout(Duration.ofMinutes(5))
             setTaskQueue(TASK_QUEUE)
             setSummary("Poll bank for payment status")
-            setRetryOptions {
-                setInitialInterval(Duration.ofSeconds(2))
-                setBackoffCoefficient(1.0)
-                setMaximumAttempts(8)
-            }
+            setRetryOptions(demoRetry())
         },
     )
 
@@ -147,11 +162,11 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private val notifier = Workflow.newActivityStub(
         NotificationActivities::class.java,
         ActivityOptions {
-            setStartToCloseTimeout(Duration.ofSeconds(5))
-            setScheduleToCloseTimeout(Duration.ofSeconds(30))
+            setStartToCloseTimeout(Duration.ofSeconds(10))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
             setTaskQueue(TASK_QUEUE)
             setSummary("Notify customer or ops")
-            setRetryOptions { setMaximumAttempts(3) }
+            setRetryOptions(demoRetry())
         },
     )
 

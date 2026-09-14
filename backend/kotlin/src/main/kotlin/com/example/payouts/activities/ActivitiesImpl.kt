@@ -10,7 +10,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
-import kotlin.time.Duration
+import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -31,10 +31,12 @@ class ActivityMock(private val scenarios: ScenarioStore) {
      * non-suspend because the Temporal Java SDK invokes activities reflectively and cannot
      * accept a Continuation parameter.
      */
-    fun <T> run(step: String, payoutId: String, pause: Duration, result: () -> T): T = runBlocking {
+    fun <T> run(step: String, payoutId: String, result: () -> T): T = runBlocking {
         val attempt = Activity.getExecutionContext().info.attempt
         scenarios.maybeFail(step, payoutId, attempt)
-        delay(pause)
+        // Randomised so no two timelines look alike. Ordinary Random is fine here:
+        // activities are not re-executed on replay, which is the whole point of activities.
+        delay(Random.nextLong(1_000, 2_500).milliseconds)
         log.info("[{}] {} (attempt {})", payoutId, step, attempt)
         result()
     }
@@ -46,7 +48,7 @@ class ActivityMock(private val scenarios: ScenarioStore) {
 @ActivityImpl(taskQueues = ["payouts"])
 class ValidationActivitiesImpl(private val mock: ActivityMock) : ValidationActivities {
     override fun validatePayout(request: ValidatePayoutRequest) =
-        mock.run("validatePayout", request.payoutId, 200.milliseconds) {
+        mock.run("validatePayout", request.payoutId) {
             ValidatePayoutResponse(valid = true, detail = "beneficiary, wallet and rail constraints OK")
         }
 }
@@ -55,17 +57,17 @@ class ValidationActivitiesImpl(private val mock: ActivityMock) : ValidationActiv
 @ActivityImpl(taskQueues = ["payouts"])
 class LedgerActivitiesImpl(private val mock: ActivityMock) : LedgerActivities {
     override fun reserveFunds(request: ReserveFundsRequest) =
-        mock.run("reserveFunds", request.payoutId, 300.milliseconds) {
+        mock.run("reserveFunds", request.payoutId) {
             ReserveFundsResponse(reservationId = "RES-${request.payoutId.takeLast(8)}")
         }
 
     override fun releaseReservedFunds(request: ReleaseFundsRequest) =
-        mock.run("releaseReservedFunds", request.payoutId, 250.milliseconds) {
+        mock.run("releaseReservedFunds", request.payoutId) {
             ReleaseFundsResponse(released = true)
         }
 
     override fun markPayout(request: MarkPayoutRequest) =
-        mock.run("markPayout", request.payoutId, 200.milliseconds) {
+        mock.run("markPayout", request.payoutId) {
             MarkPayoutResponse(recorded = true)
         }
 }
@@ -74,7 +76,7 @@ class LedgerActivitiesImpl(private val mock: ActivityMock) : LedgerActivities {
 @ActivityImpl(taskQueues = ["payouts"])
 class FxActivitiesImpl(private val mock: ActivityMock) : FxActivities {
     override fun validateFxQuote(request: ValidateFxQuoteRequest) =
-        mock.run("validateFxQuote", request.payoutId, 200.milliseconds) {
+        mock.run("validateFxQuote", request.payoutId) {
             val rate = FX_RATES[request.amount.currency] ?: 1.0
             ValidateFxQuoteResponse(
                 rate = rate,
@@ -94,7 +96,7 @@ class FxActivitiesImpl(private val mock: ActivityMock) : FxActivities {
 class RailActivitiesImpl(private val mock: ActivityMock) : RailActivities {
     // `rail` is a value, not a behaviour: it differs in the log line and nothing else.
     override fun submitToRail(request: SubmitToRailRequest) =
-        mock.run("submitToRail", request.payoutId, 600.milliseconds) {
+        mock.run("submitToRail", request.payoutId) {
             SubmitToRailResponse(
                 accepted = true,
                 bankReference = "BANK-${request.rail}-${request.payoutId.substringAfter("po-")}",
@@ -103,7 +105,7 @@ class RailActivitiesImpl(private val mock: ActivityMock) : RailActivities {
         }
 
     override fun reverseRailInstruction(request: ReverseRailRequest) =
-        mock.run("reverseRailInstruction", request.payoutId, 500.milliseconds) {
+        mock.run("reverseRailInstruction", request.payoutId) {
             ReverseRailResponse(
                 reversed = true,
                 reversalReference = "REV-${request.rail}-${request.payoutId.substringAfter("po-")}",
@@ -124,7 +126,7 @@ class BankActivitiesImpl(
      * Event History; only the final attempt number is.
      */
     override fun pollBankStatus(request: BankStatusProbeRequest) =
-        mock.run("pollBankStatus", request.payoutId, 400.milliseconds) {
+        mock.run("pollBankStatus", request.payoutId) {
             val config = scenarios.get(request.payoutId)
             val attempt = mock.currentAttempt()
             if (config.pollingNeverResolves || attempt <= config.pollsBeforeResolution) {
@@ -141,5 +143,5 @@ class BankActivitiesImpl(
 @ActivityImpl(taskQueues = ["payouts"])
 class NotificationActivitiesImpl(private val mock: ActivityMock) : NotificationActivities {
     override fun notify(request: NotifyRequest) =
-        mock.run("notify", request.payoutId, 150.milliseconds) { NotifyResponse(sent = true) }
+        mock.run("notify", request.payoutId) { NotifyResponse(sent = true) }
 }
