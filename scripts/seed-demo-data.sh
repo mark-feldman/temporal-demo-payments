@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Six workflows in six states, so the workflow list is already populated and interesting
-# when you reach the observability section. Creating them live burns minutes and invites
-# failure.
+# Six workflows in six states, so the workflow list is populated without waiting for live
+# runs to reach those states.
 set -uo pipefail
 BASE="${BASE:-http://localhost:8081}/demo-api"
 start() { curl -s -X POST "$BASE/payouts" -H 'Content-Type: application/json' -d "$1" \

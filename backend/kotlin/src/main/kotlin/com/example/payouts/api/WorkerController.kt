@@ -19,7 +19,7 @@ class WorkerController(private val supervisor: WorkerSupervisor) {
     @PostMapping("/kill-all")
     fun killAll() = supervisor.killAll()
 
-    /** The cap lives in the supervisor, next to the port range it has to agree with. */
+    /** The cap is applied by the supervisor, which owns the port range it agrees with. */
     @PostMapping("/scale")
     fun scale(@RequestParam count: Int) = supervisor.scaleTo(count)
 }

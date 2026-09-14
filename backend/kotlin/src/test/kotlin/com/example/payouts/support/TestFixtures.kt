@@ -32,13 +32,13 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Shared scaffolding for the workflow tests.
  *
- * Two things here are load-bearing rather than convenience:
+ * Two requirements:
  *
- *  - The eight custom Search Attributes the workflow upserts have to be registered with the
- *    in-memory test server, or the first `upsertTypedSearchAttributes` fails the workflow task.
- *  - The client runs on the PRODUCTION DataConverter, so every test payload goes through
- *    `KotlinxJsonPayloadConverter` exactly as it does in the demo. A test that quietly fell
- *    back to Jackson would not exercise the single-concrete-@Serializable-param rule at all.
+ *  - The custom Search Attributes the workflow upserts must be registered with the in-memory
+ *    test server, or the first `upsertTypedSearchAttributes` fails the workflow task.
+ *  - The client runs on the production DataConverter, so every test payload goes through
+ *    `KotlinxJsonPayloadConverter` as it does in the demo, exercising the
+ *    single-concrete-@Serializable-param rule.
  */
 
 /** Name -> type, matching the companion object in PayoutWorkflowImpl. */
@@ -59,14 +59,13 @@ fun productionDataConverter(): DataConverter = TemporalConfig().mainDataConverte
 /**
  * Builds the test environment used by every workflow test.
  *
- * `TestWorkflowExtension` is not used here, despite being the documented JUnit 5 entry point,
- * because it invents a per-test task queue and this workflow cannot follow it: every activity
- * stub in PayoutWorkflowImpl pins `setTaskQueue(TASK_QUEUE)` explicitly, so activities are
- * always scheduled onto "payouts". With the extension's generated queue, the workflow starts,
- * schedules validatePayout onto "payouts", and parks forever because nothing polls it.
+ * `TestWorkflowExtension` is not used: it invents a per-test task queue, and every activity
+ * stub in PayoutWorkflowImpl pins `setTaskQueue(TASK_QUEUE)`, so activities are always
+ * scheduled onto "payouts". Under the extension's generated queue the workflow parks at
+ * VALIDATING because nothing polls "payouts".
  *
  * Driving TestWorkflowEnvironment directly puts the workflow and its activities on the same
- * queue the demo uses, which is also what production does.
+ * queue the demo uses.
  */
 fun newPayoutTestEnvironment(statusListener: BusinessStatusListener? = null): TestWorkflowEnvironment {
     val options = TestEnvironmentOptions.newBuilder()
@@ -118,12 +117,11 @@ fun payoutRequest(
 )
 
 /**
- * A ScenarioStore bound to [file], never the demo's own.
+ * A ScenarioStore bound to [file] rather than the demo's own.
  *
- * The path is read once, in a field initialiser, so the system property has to be set before
- * the constructor runs and is restored immediately afterwards. Anything else would leak the
- * path into the next test -- and the default, `.scenario-store.json` relative to CWD, is the
- * live demo store sitting in this very directory.
+ * `ScenarioStore` reads its path once, in a field initialiser, so the system property is set
+ * before the constructor runs and restored immediately afterwards. The default,
+ * `.scenario-store.json` relative to CWD, is the live demo store.
  */
 fun scenarioStoreAt(file: Path): ScenarioStore {
     val previous = System.getProperty("demo.scenarioFile")
@@ -139,12 +137,9 @@ fun scenarioStoreAt(file: Path): ScenarioStore {
 /**
  * A ScenarioStore on a fresh throwaway path inside [dir].
  *
- * The file is deliberately NOT created. `Files.createTempFile` would leave a zero-byte file,
- * and `ScenarioStore.reloadIfChanged` treats "exists" as "worth parsing" -- so an empty file
- * fails to decode and logs `Could not read scenario store: ... had 'EOF' instead`. It then
- * logs it *again* on every subsequent miss, because `loadedAtMs` is only advanced on a
- * successful parse. An absent path takes the silent early return instead, which is also what
- * a real cold start looks like before the API has written anything.
+ * The file is not created. `ScenarioStore.reloadIfChanged` parses any path that exists, so a
+ * zero-byte file fails to decode and logs on every miss, since `loadedAtMs` only advances on a
+ * successful parse. An absent path takes the silent early return, as on a cold start.
  */
 fun scenarioStoreIn(dir: Path): ScenarioStore =
     scenarioStoreAt(dir.resolve("scenario-${storeSequence.incrementAndGet()}.json"))
@@ -165,15 +160,13 @@ data class ActivityCall(
 /**
  * Stand-in for the six activity implementations.
  *
- * It is deliberately NOT a Mockito mock: the workflow needs real, attempt-aware behaviour for
- * the retry and polling scenarios, and Kotlin's non-null return types make an unstubbed mock
- * fatal rather than merely empty. (PayoutWorkflowMockitoTest covers the Mockito style
- * separately, because that is the pattern the SDK documents.)
+ * Not a Mockito mock: the retry and polling scenarios need attempt-aware behaviour, and
+ * Kotlin's non-null return types make an unstubbed mock fatal rather than empty.
+ * PayoutWorkflowMockitoTest covers the Mockito style separately.
  *
- * Failure injection is delegated to the PRODUCTION [ScenarioStore.maybeFail], so there is one
- * source of truth for what FAIL_TRANSIENT and friends mean. The only behavioural difference
- * from `ActivityMock.run` is the missing 1-2.5s delay -- which exists to make the demo legible
- * and would merely make the suite slow.
+ * Failure injection is delegated to the production [ScenarioStore.maybeFail], so
+ * FAIL_TRANSIENT and the others mean one thing. The only behavioural difference from
+ * `ActivityMock.run` is the omitted 1-2.5s delay.
  */
 class RecordingActivities(
     private val scenarios: ScenarioStore,
@@ -184,9 +177,9 @@ class RecordingActivities(
     /**
      * Fail the first N attempts at releasing the reservation, then succeed.
      *
-     * Not routed through ScenarioStore: its COMPENSATION_FAILS throws unconditionally, by
-     * design, so a workflow under it never finishes compensating. A bounded count is what
-     * proves the useful property -- that an uncapped retry policy eventually gets there.
+     * Not routed through ScenarioStore, whose COMPENSATION_FAILS throws unconditionally, so a
+     * workflow under it never finishes compensating. A bounded count shows that an uncapped
+     * retry policy completes.
      */
     var releaseFailures: Int = 0
 
@@ -195,9 +188,8 @@ class RecordingActivities(
     fun callsTo(step: String): List<ActivityCall> = synchronized(calls) { calls.filter { it.step == step } }
 
     /**
-     * Records BEFORE injecting the failure -- unlike production, which logs after. Attempts
-     * that end in a retryable failure have to be visible, or "the idempotency key is stable
-     * across retries" could not be asserted at all.
+     * Records the call before injecting the failure, so attempts that end in a retryable
+     * failure are visible to assertions about retry behaviour.
      */
     private fun <T> run(
         step: String,
@@ -262,7 +254,7 @@ class RecordingActivities(
             )
         }
 
-    /** Mirrors BankActivitiesImpl: pending is a RETRYABLE failure, so the retry policy polls. */
+    /** Mirrors BankActivitiesImpl: pending is a retryable failure, so the retry policy polls. */
     override fun pollBankStatus(request: BankStatusProbeRequest) =
         run("pollBankStatus", request.payoutId) { attempt ->
             val config = scenarios.get(request.payoutId)
@@ -276,10 +268,9 @@ class RecordingActivities(
         }
 
     /**
-     * The inline settlement. Deterministic here, unlike production's 80/20 roll: a test that
-     * wants a refusal stages `behavior=REJECTED, step=settleWithBank` and gets it from
-     * ScenarioStore.maybeFail, which is the same seam every other injected failure uses.
-     * Rolling dice in the fake would make the two outcomes untestable rather than realistic.
+     * The inline settlement, always COMPLETED here rather than production's weighted roll. A
+     * test that wants a refusal stages `behavior=REJECTED, step=settleWithBank`, which
+     * ScenarioStore.maybeFail applies like every other injected failure.
      */
     override fun settleWithBank(request: BankSettlementRequest) =
         run("settleWithBank", request.payoutId, request.idempotencyKey) {

@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
-# Resolves the PINNED temporal CLI, rather than whatever PATH order happens to yield.
+# Resolves the pinned temporal CLI rather than relying on PATH order.
 #
-# PATH order is not trustworthy here and has broken the demo twice. A stale mise install
-# directory can sit ahead of the mise shim -- observed as:
-#
-#   .../mise/installs/github-temporalio-cli/v1.6.1/temporal   <- stale, first on PATH
-#   .../mise/shims/temporal                                   -> the pinned 1.8.3
-#   /opt/homebrew/bin/temporal                                -> also 1.8.3
-#
-# The CLI decides the bundled Server and Web UI versions, so the wrong one silently swaps
-# the demo's server and UI (that is how the UI came up as 2.45.3 instead of the pinned
-# 2.50.1). `mise which` answers from .mise.toml, which is the actual pin.
+# The CLI decides the bundled Server and Web UI versions, and more than one copy can be on
+# PATH -- a stale mise install directory can sit ahead of the mise shim. `mise which` answers
+# from .mise.toml, which holds the pin; `command -v` is the fallback.
 temporal_bin() {
   local bin
   bin="$(mise which temporal 2>/dev/null)" || true

@@ -19,10 +19,10 @@ import kotlin.test.assertTrue
  * The worker processes run the same jar with `demo.role=worker`, which switches off the
  * API-only beans so they do not run once per worker.
  *
- * The trap this guards: a controller that injects a primary-only bean must be gated with the
- * same condition, or the worker JVM dies at startup on an unsatisfied dependency -- and it
- * dies in a forked process whose output goes to /tmp, so the first symptom is a task queue
- * with nothing polling it. Booting the worker role here turns that into a test failure.
+ * A controller that injects a primary-only bean must be gated with the same condition, or the
+ * worker JVM fails at startup on an unsatisfied dependency. It fails in a forked process whose
+ * output goes to /tmp, so the visible symptom is a task queue with nothing polling it. Booting
+ * the worker role here turns that into a test failure.
  *
  * No @MockitoBean for WorkerSupervisor is needed: under this role the bean does not exist,
  * which is exactly what the first assertion checks.
@@ -59,9 +59,8 @@ class WorkerProfileContextTest {
 
     @Test
     fun `a worker still has the activity beans and the payout controller`() {
-        // The activities are the point of the process. PayoutController is not gated and
-        // injects nothing primary-only, so it survives -- which is what makes this a
-        // meaningful check rather than "everything is switched off".
+        // The activity beans are what the process exists to run. PayoutController is not gated
+        // and injects nothing primary-only, so it is present in this role too.
         assertTrue(ctx.getBeanNamesForType(ValidationActivitiesImpl::class.java).isNotEmpty())
         assertTrue(ctx.getBeanNamesForType(PayoutController::class.java).isNotEmpty())
     }

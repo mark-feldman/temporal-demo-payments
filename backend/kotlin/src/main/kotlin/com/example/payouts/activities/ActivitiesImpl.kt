@@ -14,28 +14,24 @@ import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * Every activity is: pause, log a line, return a canned result. No transport simulation,
- * no fake HTTP or SFTP clients -- the demo is about retries, timers, signals and
- * compensation, not about how convincingly a mock can pretend to be a bank.
+ * Every activity pauses, logs a line and returns a fixed result.
  *
- * None of this touches determinism. Activities are not re-executed on replay (the recorded
- * result is read from Event History), and activities are exactly where Temporal wants
- * non-deterministic work to live. Blocking, real timers and coroutines are all fine here.
+ * Activities are not re-executed on replay -- the recorded result is read from Event History --
+ * so blocking, real timers and coroutines are all safe here.
  */
 @Component
 class ActivityMock(private val scenarios: ScenarioStore) {
     private val log = LoggerFactory.getLogger("payouts.activity")
 
     /**
-     * runBlocking sits at the activity boundary and nowhere else. The signature has to stay
-     * non-suspend because the Temporal Java SDK invokes activities reflectively and cannot
-     * accept a Continuation parameter.
+     * runBlocking sits at the activity boundary and nowhere else. The signature is non-suspend:
+     * the Temporal Java SDK invokes activities reflectively and cannot pass a Continuation.
      */
     fun <T> run(step: String, payoutId: String, result: () -> T): T = runBlocking {
         val attempt = Activity.getExecutionContext().info.attempt
         scenarios.maybeFail(step, payoutId, attempt)
-        // Randomised so no two timelines look alike. Ordinary Random is fine here:
-        // activities are not re-executed on replay, which is the whole point of activities.
+        // Randomised. Ordinary Random is safe in an activity: activities are not re-executed
+        // on replay.
         delay(Random.nextLong(1_000, 2_500).milliseconds)
         log.info("[{}] {} (attempt {})", payoutId, step, attempt)
         result()
@@ -86,7 +82,7 @@ class FxActivitiesImpl(private val mock: ActivityMock) : FxActivities {
         }
 
     private companion object {
-        /** Canned. A demo rate table, not a market feed. */
+        /** A fixed rate table. */
         val FX_RATES = mapOf("USD" to 1.0, "SGD" to 0.74, "AUD" to 0.66, "CNY" to 0.14, "EUR" to 1.08)
     }
 }
@@ -94,7 +90,7 @@ class FxActivitiesImpl(private val mock: ActivityMock) : FxActivities {
 @Component
 @ActivityImpl(taskQueues = ["payouts"])
 class RailActivitiesImpl(private val mock: ActivityMock) : RailActivities {
-    // `rail` is a value, not a behaviour: it differs in the log line and nothing else.
+    // `rail` affects the log line and the bank reference prefix, and nothing else.
     override fun submitToRail(request: SubmitToRailRequest) =
         mock.run("submitToRail", request.payoutId) {
             SubmitToRailResponse(
@@ -120,10 +116,9 @@ class BankActivitiesImpl(
     private val scenarios: ScenarioStore,
 ) : BankActivities {
     /**
-     * The bank reports "pending" for the first few attempts, then gives a real answer.
-     * Pending is thrown as a RETRYABLE failure, so the stub's retry policy is what does the
-     * polling -- no sleep loop in workflow code. Intermediate attempts are not written to
-     * Event History; only the final attempt number is.
+     * Reports "pending" for the first `pollsBeforeResolution` attempts, then gives a real
+     * answer. Pending is a retryable failure, so the stub's retry policy performs the polling.
+     * Intermediate attempts are not written to Event History; only the final attempt number is.
      */
     override fun pollBankStatus(request: BankStatusProbeRequest) =
         mock.run("pollBankStatus", request.payoutId) {
@@ -139,13 +134,12 @@ class BankActivitiesImpl(
         }
 
     /**
-     * The inline answer for a low-value instruction: settled or refused, decided here and
-     * now. [SYNC_SETTLEMENT_SUCCESS_PCT] of them settle.
+     * The inline answer for a low-value instruction: [SYNC_SETTLEMENT_SUCCESS_PCT] settle, the
+     * rest are refused.
      *
-     * `mock.run` puts this behind the same failure injection as every other step, so a
-     * scenario staged with `behavior=REJECTED, step=settleWithBank` still throws a
-     * non-retryable BankRejected instead of rolling the dice -- which is how the tests keep
-     * this deterministic without a second configuration knob.
+     * `mock.run` applies the same failure injection as every other step, so a scenario staged
+     * with `behavior=REJECTED, step=settleWithBank` throws a non-retryable BankRejected
+     * instead of rolling for an outcome.
      */
     override fun settleWithBank(request: BankSettlementRequest) =
         mock.run("settleWithBank", request.payoutId) {
@@ -154,7 +148,7 @@ class BankActivitiesImpl(
         }
 
     private companion object {
-        /** Pre-canned 80/20. Rolled in the activity, so it replays as whatever it returned. */
+        /** Share of inline settlements that succeed. Rolled in the activity, so it replays. */
         const val SYNC_SETTLEMENT_SUCCESS_PCT = 80
     }
 }

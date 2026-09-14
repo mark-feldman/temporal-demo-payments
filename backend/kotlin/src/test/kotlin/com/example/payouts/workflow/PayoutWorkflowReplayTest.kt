@@ -37,7 +37,7 @@ class PayoutWorkflowReplayTest : PayoutWorkflowTestBase() {
 
     /** Replays against a fresh environment carrying the production DataConverter. */
     private fun replay(history: WorkflowExecutionHistory) {
-        // The single-argument overload spins up a DEFAULT TestWorkflowEnvironment, which
+        // The single-argument overload spins up a default TestWorkflowEnvironment, which
         // means the default Jackson converter rather than this app's kotlinx one. Supplying
         // the environment keeps the replay on the same converter that wrote the payloads.
         val replayEnv = newPayoutTestEnvironment()
@@ -84,7 +84,7 @@ class PayoutWorkflowReplayTest : PayoutWorkflowTestBase() {
         stub.bankStatusUpdate(BankStatusUpdateRequest(BankStatus.COMPLETED))
         resultOf(stub)
 
-        // The interesting one: the workflow randomises its retry cap with Workflow.newRandom
+        // The workflow randomises its retry cap with Workflow.newRandom
         // and orders two deadlines through timer callbacks. Both have to reproduce exactly.
         replay(client.fetchHistory("replay-approval"))
     }

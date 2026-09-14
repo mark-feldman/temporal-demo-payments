@@ -16,10 +16,8 @@ import kotlin.test.assertTrue
  * exactly three prefixes -- the root, everything under `/assets`, and everything under
  * `/demo-api`. Those reach Spring Boot; every other path is answered by Temporal Web.
  *
- * A route added outside those prefixes compiles, starts, and answers correctly on :8081 --
- * and is then silently swallowed by Temporal in the assembled stack, where the only URL
- * anyone opens is :8080. That failure mode is invisible to every other test here, so it gets
- * its own.
+ * A route added outside those prefixes answers on :8081 but is served by Temporal Web on
+ * :8080, which is the port the assembled stack exposes. No other test here covers that.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -28,7 +26,7 @@ class RouteNamespaceTest {
     @MockitoBean
     private lateinit var workerSupervisor: WorkerSupervisor
 
-    // Qualified deliberately: the actuator contributes a second RequestMappingHandlerMapping
+    // Qualified because the actuator contributes a second RequestMappingHandlerMapping
     // (controllerEndpointHandlerMapping). This one holds the application's own controllers.
     @Autowired
     @Qualifier("requestMappingHandlerMapping")

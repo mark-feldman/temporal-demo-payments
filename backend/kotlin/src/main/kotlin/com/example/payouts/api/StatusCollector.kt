@@ -9,12 +9,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Component
 
 /**
- * Business metrics come from the API layer asking Temporal, never from workflow code --
- * a counter incremented inside a workflow double-counts on every replay.
+ * Business metrics, collected by the API layer from Temporal rather than emitted by workflow
+ * code, where a counter would double-count on replay.
  *
- * It also shows what the custom search attributes are for: the counts come from a
- * visibility query over `businessStatus`, the same query you would type into the
- * Temporal Web filter box.
+ * The counts come from a visibility query over the `businessStatus` search attribute -- the
+ * same query the Temporal Web filter box takes.
  */
 @Component
 @ConditionalOnProperty(name = ["demo.role"], havingValue = "primary", matchIfMissing = true)

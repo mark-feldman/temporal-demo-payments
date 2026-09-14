@@ -15,18 +15,12 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * How the bank confirms, decided by the size of the payout.
+ * How the bank confirms, decided by the amount.
  *
  * Below [SettlementThresholds.SYNC_BELOW_MINOR] the rail answers inside a single activity, so
- * the workflow never parks and never starts the 45s deadline. Above it, the instruction is
- * confirmed out of band and the workflow waits durably on a signal -- which is the behaviour
- * every other test in this suite already covers, so what is asserted here is mostly the
- * *absence* of that wait, plus the fact that the boundary is read from the workflow's own input
- * rather than from anything mutable.
- *
- * Why it matters beyond a latency saving: the previous behaviour made every payout wait for a
- * callback, so a load simulation that did not send one took 67 seconds per payout and drove
- * every scenario through POLLING_BANK_STATUS, which is supposed to be one scenario's signature.
+ * the workflow never parks and never starts the bank deadline. At or above it the instruction
+ * is confirmed out of band and the workflow waits durably on a signal, which the rest of this
+ * suite covers. What is asserted here is mostly the absence of that wait.
  */
 class PayoutWorkflowSyncSettlementTest : PayoutWorkflowTestBase() {
 
@@ -74,8 +68,8 @@ class PayoutWorkflowSyncSettlementTest : PayoutWorkflowTestBase() {
 
     @Test
     fun `a refused inline settlement compensates and is flagged BANK_REJECTED`() {
-        // The 80/20 roll lives in the production activity; the fake is deterministic, so a
-        // refusal is injected the same way every other failure in this suite is.
+        // The weighted roll is in the production activity; the fake always settles, so a
+        // refusal is injected the way every other failure in this suite is.
         scenarios.put(
             "po-000001",
             ScenarioConfig(behavior = Behavior.REJECTED, step = "settleWithBank"),
@@ -104,8 +98,7 @@ class PayoutWorkflowSyncSettlementTest : PayoutWorkflowTestBase() {
         start(stub, payoutRequest(amountMinor = lowValue))
         resultOf(stub)
 
-        // BankRejected is on the stub's doNotRetry list. Without that it would be retried
-        // 7-10 times before failing, and a refused payment is a final answer, not a blip.
+        // BankRejected is on the stub's doNotRetry list, so a refusal is not retried.
         assertEquals(1, activities.callsTo("settleWithBank").size)
     }
 
@@ -113,7 +106,7 @@ class PayoutWorkflowSyncSettlementTest : PayoutWorkflowTestBase() {
     fun `at the threshold exactly, the payout waits for the callback instead`() {
         startWorker()
         val stub = newStub("sync-settle-boundary")
-        // settlesSynchronously is a strict `<`, so the threshold value itself is NOT low-value.
+        // settlesSynchronously is a strict `<`, so the threshold value itself is not low-value.
         start(stub, payoutRequest(amountMinor = callbackValue))
 
         val parked = awaitStatus(stub, BusinessStatus.AWAITING_BANK_CONFIRMATION)
@@ -128,8 +121,7 @@ class PayoutWorkflowSyncSettlementTest : PayoutWorkflowTestBase() {
         start(stub, payoutRequest(amountMinor = lowValue))
         resultOf(stub)
 
-        // The 45s bank deadline is a real workflow timer. A low-value payout must not start
-        // one -- that is the whole latency saving, and history is where it shows.
+        // The bank deadline is a workflow timer; a low-value payout starts no timers at all.
         val timers = client.fetchHistory("sync-settle-no-timer").history.eventsList
             .count { it.eventType == EventType.EVENT_TYPE_TIMER_STARTED }
         assertEquals(0, timers, "no approval wait and no bank wait means no timers")

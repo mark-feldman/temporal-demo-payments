@@ -16,10 +16,10 @@ import kotlin.test.assertTrue
 /**
  * What happens after the bank has the instruction.
  *
- * The headline case is the absent callback: the workflow resolves it by POLLING, not by
- * escalating to a human. There is no sleep loop -- `pollBankStatus` throws a retryable
- * failure while the bank still says "pending", so the retry policy on the stub IS the polling
- * loop, and the backoff between polls is skipped by the test server's clock.
+ * An absent callback is resolved by polling rather than by escalating. There is no sleep loop:
+ * `pollBankStatus` throws a retryable failure while the bank reports "pending", so the retry
+ * policy on the stub is the polling loop, and the backoff between polls is skipped by the test
+ * server's clock.
  */
 class PayoutWorkflowBankTest : PayoutWorkflowTestBase() {
 
@@ -106,8 +106,7 @@ class PayoutWorkflowBankTest : PayoutWorkflowTestBase() {
         val result = resultOf(stub)
 
         assertEquals(BusinessStatus.FAILED, result.status)
-        // Compensating on an instruction that MAY have settled is a policy choice, and the
-        // record has to say so. UNKNOWN_BANK_STATUS is that statement.
+        // UNKNOWN_BANK_STATUS records that the instruction may already have settled.
         assertEquals(FailureCategory.UNKNOWN_BANK_STATUS, result.failureCategory)
         assertTrue(
             activities.callsTo("pollBankStatus").size >= 7,

@@ -18,20 +18,17 @@ import java.nio.file.Path
 import java.time.Duration
 
 /**
- * Time skipping is LOCKED unless a client stub is blocked inside getResult -- verified in
+ * Time skipping is locked unless a client stub is blocked inside getResult, per
  * TimeLockingInterceptor/IdempotentTimeLocker. Two consequences shape every test here:
  *
- *  1. Waiting for an intermediate state between `start` and `getResult` is race-free.
- *     Virtual time cannot run ahead, so the 30s approval and 45s bank deadlines cannot fire
- *     underneath the assertion.
- *  2. For the same reason, activity retry BACKOFF is also frozen during that window. A test
- *     that injects a transient failure must not wait for an intermediate state -- it would
- *     wait forever, because the workflow cannot progress until time moves. Those tests send
- *     their signal up front, or schedule it with `env.registerDelayedCallback`, and block on
- *     the result instead.
+ *  1. Waiting for an intermediate state between `start` and `getResult` is race-free. Virtual
+ *     time cannot run ahead, so the approval and bank deadlines cannot fire underneath the
+ *     assertion.
+ *  2. Activity retry backoff is frozen in the same window, so a test that injects a transient
+ *     failure cannot wait for an intermediate state. Those tests send their signal up front or
+ *     schedule it with `env.registerDelayedCallback`, and block on the result.
  *
- * Waiting itself is event-driven rather than polled: see [awaitStatus] and
- * [BusinessStatusListener].
+ * Waiting is event-driven rather than polled: see [awaitStatus] and [BusinessStatusListener].
  */
 abstract class PayoutWorkflowTestBase {
 
@@ -93,12 +90,10 @@ abstract class PayoutWorkflowTestBase {
      * `upsertTypedSearchAttributes` call the instant the transition happens. No sleeping, no
      * repeated Queries.
      *
-     * Exactly ONE Query follows, to fetch the fields the transition event does not carry.
-     * That read is consistent because every state this is used to wait for -- the two
-     * AWAITING_* states and the terminal ones -- is immediately followed by a durable wait,
-     * and virtual time is locked while the test holds no `getResult` call open, so nothing
-     * can move the workflow on in between. If that assumption is ever broken the check below
-     * fails loudly rather than quietly asserting against the wrong state.
+     * Exactly one Query follows, to fetch the fields the transition event does not carry. That
+     * read is consistent for the states this waits on -- the two AWAITING_* states and the
+     * terminal ones -- because each is followed by a durable wait, and virtual time is locked
+     * while no `getResult` call is open. The check below fails loudly if that does not hold.
      */
     protected fun awaitStatus(
         stub: PayoutWorkflow,

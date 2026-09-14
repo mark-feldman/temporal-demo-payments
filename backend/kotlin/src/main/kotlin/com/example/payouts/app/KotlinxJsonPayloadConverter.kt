@@ -15,9 +15,8 @@ import java.util.Optional
  * kotlinx.serialization PayloadConverter.
  *
  * Declares the same encoding type as Jackson ("json/plain"), so registering it through
- * withPayloadConverterOverrides() REPLACES Jackson in the standard chain while keeping the
- * Null/ByteArray/Protobuf converters. Payloads stay readable in Temporal Web, which matters
- * more here than in most projects because the whole talk points at that pane.
+ * withPayloadConverterOverrides() replaces Jackson in the standard chain while keeping the
+ * Null/ByteArray/Protobuf converters. Payloads stay readable in Temporal Web.
  *
  * Jackson is retained as an internal fallback for types kotlinx has no serializer for:
  * SDK-internal types, java.time, and the plain Strings that end up in failure details.
@@ -28,8 +27,8 @@ class KotlinxJsonPayloadConverter(
 ) : PayloadConverter {
 
     companion object {
-        // io.temporal.common.converter.EncodingKeys is PACKAGE-PRIVATE -- its constants
-        // cannot be referenced from here, so the wire values are inlined.
+        // io.temporal.common.converter.EncodingKeys is package-private, so the wire values
+        // are inlined here.
         const val METADATA_ENCODING_KEY = "encoding"
         const val JSON_PLAIN = "json/plain"
     }
@@ -38,8 +37,8 @@ class KotlinxJsonPayloadConverter(
 
     override fun toData(value: Any?): Optional<Payload> {
         if (value == null) return fallback.toData(value)
-        // Only the RUNTIME class is available here. That is why every top-level workflow
-        // and activity parameter must be a concrete @Serializable data class.
+        // Only the runtime class is available here, so every top-level workflow and activity
+        // parameter must be a concrete @Serializable data class.
         val serializer = serializerOrNull(value.javaClass) ?: return fallback.toData(value)
         return Optional.of(
             Payload.newBuilder()
@@ -53,7 +52,7 @@ class KotlinxJsonPayloadConverter(
 
     @Suppress("UNCHECKED_CAST")
     override fun <T> fromData(content: Payload, valueClass: Class<T>, valueType: Type): T {
-        // The declared type IS available here, so generics survive.
+        // The declared type is available here, so generics survive.
         val serializer = serializerOrNull(valueType)
             ?: return fallback.fromData(content, valueClass, valueType)
         return json.decodeFromString(serializer, content.data.toString(StandardCharsets.UTF_8)) as T

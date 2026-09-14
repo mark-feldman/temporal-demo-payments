@@ -42,8 +42,8 @@ interface RailActivities {
 interface BankActivities {
     /**
      * Asks the bank what happened to an instruction it accepted but never confirmed.
-     * Throws a retryable failure while the bank still says "pending", so the retry policy
-     * on the stub does the polling and every attempt lands in the event history.
+     * Throws a retryable failure while the bank still reports "pending", so the retry policy
+     * on the stub performs the polling.
      */
     @ActivityMethod
     fun pollBankStatus(request: BankStatusProbeRequest): BankStatusProbeResponse
@@ -52,10 +52,9 @@ interface BankActivities {
      * Settles a low-value instruction in one call: the rail answers COMPLETED or REJECTED
      * inline, so the workflow never waits on a callback.
      *
-     * The 80/20 split lives here rather than in the workflow on purpose. Activity results are
-     * recorded in Event History and activities are not re-executed on replay, so a coin toss
-     * inside an activity replays as whatever it returned the first time. The same toss in
-     * workflow code would come up differently on every replay and break determinism.
+     * The outcome is decided here rather than in workflow code. Activity results are recorded
+     * in Event History and activities are not re-executed on replay, so a random choice inside
+     * an activity replays as whatever it returned.
      */
     @ActivityMethod
     fun settleWithBank(request: BankSettlementRequest): BankSettlementResponse

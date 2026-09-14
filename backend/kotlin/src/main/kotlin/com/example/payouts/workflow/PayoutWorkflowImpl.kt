@@ -16,35 +16,29 @@ import io.temporal.workflow.Workflow
 import java.time.Duration
 
 /**
- * The attempt cap on the demo retry policy, drawn per workflow instance so no two executions
- * retry the same number of times.
+ * The attempt cap on the demo retry policy. Each workflow instance draws a value from this
+ * range, so no two executions retry the same number of times.
  *
- * The minimum is a constraint on the demo as much as on the policy. A failure-injection count
- * of [DEMO_MIN_ATTEMPTS] or more exhausts the policy on *some* executions and not others,
- * which turns the retry scenario into a compensation scenario at random. `app.js` picks those
- * counts, so `DemoScenarioDefaultsTest` holds it to this bound.
+ * A failure-injection count at or above [DEMO_MIN_ATTEMPTS] exhausts the policy on some
+ * executions and not others. `app.js` picks those counts and `DemoScenarioDefaultsTest` holds
+ * them below this bound.
  */
 const val DEMO_MIN_ATTEMPTS = 7
 const val DEMO_MAX_ATTEMPTS = 10
 
-/** Registered by @WorkflowImpl; deliberately NOT a Spring bean -- Temporal creates one per execution. */
+/** Registered by @WorkflowImpl, not as a Spring bean: Temporal creates one per execution. */
 @WorkflowImpl(taskQueues = [TASK_QUEUE])
 class PayoutWorkflowImpl : PayoutWorkflow {
 
     private val log = Workflow.getLogger(javaClass)
 
     /**
-     * Replay-safe RNG. kotlin.random.Random here would draw a different attempt cap on every
-     * replay and break determinism; Workflow.newRandom is seeded per workflow instance and
-     * replays identically. Workflow context is available during construction -- the activity
-     * stubs below rely on the same thing.
+     * Replay-safe RNG: seeded per workflow instance and replays identically. Workflow context
+     * is available during construction, which the activity stubs below also rely on.
      */
     private val rng: java.util.Random = Workflow.newRandom()
 
-    /**
-     * Deliberately slow and persistent so retries are legible rather than instantaneous:
-     * [DEMO_MIN_ATTEMPTS]-[DEMO_MAX_ATTEMPTS] attempts, 1s initial, x1.1, capped at 20s.
-     */
+    /** [DEMO_MIN_ATTEMPTS]-[DEMO_MAX_ATTEMPTS] attempts, 1s initial, x1.1, capped at 20s. */
     private fun demoRetry(): io.temporal.common.RetryOptions = RetryOptions {
         setInitialInterval(Duration.ofSeconds(1))
         setBackoffCoefficient(1.1)
@@ -62,9 +56,8 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private var usdEquivalentMinor = 0L
     private var payoutId = ""
     private var reversalReference = ""
-    // Deadline flags flipped by timer callbacks. Callbacks and signal handlers both run in
-    // event order, so "did the signal beat the deadline" is answered by which of the two ran
-    // first -- not by wall-clock, and not by which promise `await` happened to unblock on.
+    // Deadline flags flipped by timer callbacks. Callbacks and signal handlers run in event
+    // order, so whether the signal beat the deadline is decided by which of the two ran first.
     /** Set once, at the top of processPayout. See [FINDABLE_STATUSES]. */
     private var visibilityMilestonesOnly = false
     private var approvalDeadlinePassed = false
@@ -86,18 +79,31 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         },
     )
 
+    /** Reserves the funds. A separate stub from [ledgerOutcome] so each carries its own summary. */
     private val ledger = Workflow.newActivityStub(
         LedgerActivities::class.java,
         ActivityOptions {
             setStartToCloseTimeout(Duration.ofSeconds(10))
             setScheduleToCloseTimeout(Duration.ofMinutes(5))
             setTaskQueue(TASK_QUEUE)
-            setSummary("Ledger operation")
+            setSummary("Reserve funds in the ledger")
             setRetryOptions(demoRetry().toBuilder().setDoNotRetry("InsufficientFunds").build())
         },
     )
 
-    /** Compensation must not give up: attempts unset = unlimited, flat 5s backoff. */
+    /** Records the terminal outcome. Same options as [ledger]; only the summary differs. */
+    private val ledgerOutcome = Workflow.newActivityStub(
+        LedgerActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(10))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("Record the payout outcome in the ledger")
+            setRetryOptions(demoRetry().toBuilder().setDoNotRetry("InsufficientFunds").build())
+        },
+    )
+
+    /** Compensation has no attempt cap: attempts unset means unlimited. Flat 5s backoff. */
     private val compensationLedger = Workflow.newActivityStub(
         LedgerActivities::class.java,
         ActivityOptions {
@@ -112,7 +118,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         },
     )
 
-    /** Reversal must not give up either: attempts unset, flat 5s. */
+    /** Reversal has no attempt cap either: attempts unset, flat 5s. */
     private val compensationRail = Workflow.newActivityStub(
         RailActivities::class.java,
         ActivityOptions {
@@ -150,16 +156,13 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     )
 
     /**
-     * The retry policy here is the polling loop: `pollBankStatus` throws a retryable failure
-     * while the bank says "pending", so Temporal re-invokes it on a schedule. Eight attempts
-     * at a 2s flat interval is roughly 16 seconds of asking before we accept that the bank is
-     * not going to answer.
+     * The retry policy is the polling loop: `pollBankStatus` throws a retryable failure while
+     * the bank reports "pending", so Temporal re-invokes it on a schedule.
      *
-     * Note what this does NOT produce: intermediate attempts are not written to Event History.
-     * One ActivityTaskScheduled, then ActivityTaskStarted carrying the final attempt number.
-     * The polls are observable while they are happening, through the pending-activity record
-     * on DescribeWorkflowExecution, and afterwards only as that attempt count plus the elapsed
-     * time between Scheduled and Started.
+     * Intermediate attempts are not written to Event History -- one ActivityTaskScheduled, then
+     * ActivityTaskStarted carrying the final attempt number. Polls in progress are visible on
+     * the pending-activity record from DescribeWorkflowExecution; afterwards only the attempt
+     * count and the Scheduled-to-Started gap remain.
      */
     private val bank = Workflow.newActivityStub(
         BankActivities::class.java,
@@ -173,11 +176,9 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     )
 
     /**
-     * Inline settlement for a low-value instruction. A SEPARATE stub from `bank` because the
-     * retry policy means something different here: `bank` retries in order to poll, whereas a
-     * settlement that comes back REJECTED is a final answer returned as a value, not an error.
-     * `BankRejected` is listed as non-retryable anyway, so a scenario that injects a refusal
-     * at this step fails once rather than seven to ten times.
+     * Inline settlement for a low-value instruction, on its own stub: `bank` retries in order
+     * to poll, whereas a settlement returns its answer as a value. `BankRejected` is
+     * non-retryable here, so an injected refusal at this step fails once.
      */
     private val bankSettlement = Workflow.newActivityStub(
         BankActivities::class.java,
@@ -190,7 +191,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         },
     )
 
-    /** Capped at 3 so a dead notifier cannot hold a payout in COMPENSATING forever. */
+    /** Capped, so a dead notifier cannot hold a payout in COMPENSATING indefinitely. */
     private val notifier = Workflow.newActivityStub(
         NotificationActivities::class.java,
         ActivityOptions {
@@ -204,10 +205,8 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     override fun processPayout(request: ProcessPayoutRequest): ProcessPayoutResponse {
         payoutId = request.payoutId
-        // Resolved before the first command so the decision is stable for the whole
-        // execution, and patched for the same reason as the settlement split: dropping an
-        // upsert changes the command stream, and an execution that already recorded one for
-        // VALIDATING would not emit it on replay.
+        // Resolved before the first command, so the decision is stable for the whole
+        // execution. Patched: which upserts are emitted is part of the command stream.
         visibilityMilestonesOnly =
             Workflow.getVersion(VISIBILITY_MILESTONES_CHANGE, Workflow.DEFAULT_VERSION, VISIBILITY_MILESTONES_VERSION) >=
                 VISIBILITY_MILESTONES_VERSION
@@ -227,11 +226,9 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             )
             advance(BusinessStatus.VALIDATED, "Request validated")
 
-            // Registered BEFORE the call, not after. If reserveFunds moves money in the ledger
-            // and then dies before returning, a compensation registered afterwards would never
-            // exist and the funds would stay reserved. Releasing by payoutId rather than the
-            // reservation id is what makes that possible -- we cannot reference a result we do
-            // not have yet.
+            // Registered before the call it undoes, so it exists even if reserveFunds moves
+            // money and then fails before returning. Keyed on payoutId, which is known now;
+            // the reservation id is not.
             saga.addCompensation {
                 compensationLedger.releaseReservedFunds(ReleaseFundsRequest(request.payoutId, ""))
             }
@@ -248,13 +245,12 @@ class PayoutWorkflowImpl : PayoutWorkflow {
                 throw ApprovalDeclined()
             }
 
-            // Rail selection is plain deterministic workflow code: no I/O, so no Activity.
-            // Visibility comes from setCurrentDetails, not from an event.
+            // Rail selection is deterministic workflow code, not an Activity: no I/O. It is
+            // visible through setCurrentDetails rather than a history event.
             advance(BusinessStatus.SUBMITTING_TO_BANK, "Selected ${request.rail} rail for ${request.region}")
-            // Registered before the call for the same reason as the ledger release: if
-            // submitToRail dies after the bank accepted the instruction, we still have to be
-            // able to reverse it. Keyed on the idempotency key, which is known up front --
-            // the bank reference is not.
+            // Registered before the call it undoes, so the instruction can be reversed even
+            // if submitToRail fails after the bank accepted it. Keyed on the idempotency key,
+            // which is known now; the bank reference is not.
             saga.addCompensation {
                 reversalReference = compensationRail.reverseRailInstruction(
                     ReverseRailRequest(
@@ -278,16 +274,15 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             bankReference = submission.bankReference
             advance(BusinessStatus.SUBMITTED_TO_BANK, "Bank accepted instruction ${submission.bankReference}")
 
-            // How the bank confirms depends on the size of the payout, and the decision comes
-            // from the workflow's own input so it replays identically. Low-value instructions
-            // are answered inline by a single activity; larger ones are confirmed out of
-            // band, which is the durable-wait-on-a-signal path.
+            // How the bank confirms depends on the amount, read from the workflow's input so
+            // it replays identically. Low-value instructions are answered inline by a single
+            // activity; larger ones wait durably on the callback signal.
             val reported = if (settlesInline(request)) {
                 settleWithBankInline(request)
             } else {
                 when (val first = awaitBankStatus()) {
-                    // No answer, or an ambiguous one. Ask the bank directly rather than
-                    // escalating to a human: the retry policy on the poll stub does the polling.
+                    // No answer, or an ambiguous one: ask the bank directly. The retry policy
+                    // on the poll stub does the polling.
                     BankStatus.UNKNOWN, BankStatus.ACCEPTED -> pollBankUntilResolved(request)
                     else -> first
                 }
@@ -309,7 +304,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     // ---- signals and query ----
 
     override fun approve(request: ApprovalDecisionRequest) {
-        // Ignore a decision that arrives after the timer has already fired.
+        // A decision arriving after the deadline timer fired is ignored.
         if (!approvalDeadlinePassed) approval = request
     }
 
@@ -336,14 +331,10 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     private fun awaitApproval(request: ProcessPayoutRequest): Boolean {
         advance(BusinessStatus.AWAITING_APPROVAL, "Waiting for $approvalTier approval")
-        // An explicit timer rather than await's built-in timeout. If no worker is alive, the
-        // signal and the timer both sit in history until one comes back, and await reports a
-        // timeout even though the approval genuinely arrived first. Ordering the two through
-        // event callbacks answers that correctly and identically on every replay.
-        //
-        // It has to be owned by a cancellation scope. await(timeout, cond) cancels its own
-        // internal timer; a bare newTimer does not, and an uncancelled one is left dangling
-        // in history as a TimerStarted with nothing resolving it.
+        // An explicit timer, not await's built-in timeout: the signal and the timer are
+        // ordered by which callback ran first, which replays identically. The timer is owned
+        // by a cancellation scope because a bare newTimer is not cancelled by await, and an
+        // uncancelled one stays in history as an unresolved TimerStarted.
         val deadline = Workflow.newCancellationScope(Runnable {
             Workflow.newTimer(Duration.ofSeconds(approvalTimeoutSeconds()))
                 .thenApply { approvalDeadlinePassed = true }
@@ -370,41 +361,24 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     }
 
     /**
-     * Whether this payout takes the inline-settlement path -- **patched**, not simply switched.
+     * Whether this payout takes the inline-settlement path.
      *
-     * Splitting the bank confirmation by amount replaced one branch with another, which is the
-     * textbook way to break replay: an execution that already recorded the old branch produces
-     * different commands under the new code, and Temporal blocks it rather than failing it
-     * loudly. Verified rather than assumed, by replaying a real exported history against the
-     * unpatched code:
+     * Gated by `Workflow.getVersion`, which records a marker for new executions and returns
+     * DEFAULT_VERSION when replaying a history without one, so executions started before the
+     * branch existed keep the callback wait.
      *
-     *     NonDeterministicException: [TMPRL1100] Failure handling event 37 of type
-     *     'EVENT_TYPE_TIMER_STARTED' during replay. Event 37 of type EVENT_TYPE_TIMER_STARTED
-     *     does not match command type COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK
+     * The version is consulted only after the threshold test, so no marker is written on the
+     * callback path. That is safe because the test reads `request.amount`, which is recorded in
+     * WorkflowExecutionStarted and therefore identical on every replay. It also means the
+     * threshold constant can change without affecting executions already in flight.
      *
-     * -- the recorded bank deadline timer, where the new code wanted to schedule settleWithBank.
-     * 482 executions were in flight below the threshold at the time.
+     * `TemporalChangeVersion` is upserted by hand: the Java SDK does not record it. It makes
+     * the remaining patch steps queryable:
      *
-     * `Workflow.getVersion` records a marker for new executions and returns DEFAULT_VERSION
-     * when replaying a history that has none, so pre-change executions keep the wait they
-     * already committed to and new ones settle inline.
+     *     temporal workflow list --query 'TemporalChangeVersion IS NULL AND ExecutionStatus="Running"'
      *
-     * Two things about the shape:
-     *
-     *  - The version is consulted only AFTER the threshold test, so no marker is written on the
-     *    majority path. That is safe because the test reads `request.amount`, which is recorded
-     *    in WorkflowExecutionStarted and therefore identical on every replay -- the decision to
-     *    consult the marker is itself deterministic. It also makes the threshold constant safe
-     *    to change: raise it, and an in-flight payout that was above the old boundary finds no
-     *    marker and stays on the path it started.
-     *  - The Java SDK does NOT record `TemporalChangeVersion` for you, unlike Python and
-     *    TypeScript, so it is upserted by hand. That is what makes the next two steps of the
-     *    patch answerable from a query rather than a guess:
-     *
-     *        temporal workflow list --query 'TemporalChangeVersion IS NULL AND ExecutionStatus="Running"'
-     *
-     *    When no pre-patch execution is left, `minSupported` moves to 1 and the old branch
-     *    goes; when no marker is left, the `getVersion` call itself goes.
+     * When that returns nothing, `minSupported` can move to 1 and the old branch can go; when
+     * no marker is left, the `getVersion` call can go.
      */
     private fun settlesInline(request: ProcessPayoutRequest): Boolean {
         if (!SettlementThresholds.settlesSynchronously(request.amount.amountMinor)) return false
@@ -417,9 +391,8 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     }
 
     /**
-     * Settle inline. One activity call, one answer, no timer and no signal -- so a low-value
-     * payout never spends the 45s bank deadline, and the state it passes through says which
-     * path it took rather than leaving that to be inferred from the absence of a wait.
+     * Settles in one activity call: no timer and no signal. SETTLING_WITH_BANK records that
+     * this is the path taken.
      */
     private fun settleWithBankInline(request: ProcessPayoutRequest): BankStatus {
         advance(BusinessStatus.SETTLING_WITH_BANK, "Low-value payout - the bank answers inline")
@@ -434,7 +407,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     private fun awaitBankStatus(): BankStatus {
         advance(BusinessStatus.AWAITING_BANK_CONFIRMATION, "Waiting for bank payment status")
-        // Same ordering argument, and the same need to own the timer.
+        // Ordered by callback like the approval wait, and the timer is owned the same way.
         val deadline = Workflow.newCancellationScope(Runnable {
             Workflow.newTimer(Duration.ofSeconds(bankCallbackTimeoutSeconds()))
                 .thenApply { bankDeadlinePassed = true }
@@ -462,7 +435,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     }
 
     private fun complete(request: ProcessPayoutRequest): ProcessPayoutResponse {
-        ledger.markPayout(MarkPayoutRequest(request.payoutId, "COMPLETED"))
+        ledgerOutcome.markPayout(MarkPayoutRequest(request.payoutId, "COMPLETED"))
         notifier.notify(NotifyRequest(request.payoutId, "customer", "Payout completed"))
         advance(BusinessStatus.COMPLETED, "Payout completed")
         return ProcessPayoutResponse(
@@ -482,10 +455,9 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         if (failure == FailureCategory.NONE) {
             failure = when {
                 e is BankStatusUnresolved -> FailureCategory.UNKNOWN_BANK_STATUS
-                // Matched on the failure TYPE rather than the message. An inline settlement
-                // that the bank refuses throws ApplicationFailure("BankRejected"), whose
-                // message says "bank" and not "Rail", so the substring check below filed it
-                // under VALIDATION -- found by the test for that path, not by reading.
+                // Matched on the failure type, not the message: a refused inline settlement
+                // throws ApplicationFailure("BankRejected"), whose message the substring check
+                // below does not match.
                 failureTypeOf(e) == "BankRejected" -> FailureCategory.BANK_REJECTED
                 e is ActivityFailure && e.cause?.message?.contains("Rail") == true -> FailureCategory.RAIL_PERMANENT
                 else -> FailureCategory.VALIDATION
@@ -500,7 +472,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             // then release the funds we reserved.
             saga.compensate()
             advance(BusinessStatus.COMPENSATED, "Bank instruction reversed and reserved funds released")
-            ledger.markPayout(
+            ledgerOutcome.markPayout(
                 MarkPayoutRequest(request.payoutId, if (cancelled) "CANCELLED" else "FAILED", failure.name),
             )
             notifier.notify(
@@ -528,12 +500,9 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         step = detail
         history += "${next.name}: $detail"
         Workflow.setCurrentDetails("**${next.name}** - $detail")
-        // Every transition is still recorded -- in `history` for the Query, and in
-        // setCurrentDetails for the Temporal timeline. What is rationed is the *visibility*
-        // write, because that is the part that costs a command, a history event and a
-        // visibility task apiece. Under the high-load preset those upserts were the single
-        // biggest per-payout contributor to history-service load: nine of them on a payout
-        // that a visibility query can only usefully be asked about twice.
+        // Every transition is recorded in `history` for the Query and in setCurrentDetails
+        // for the timeline. Only the visibility write is restricted to [FINDABLE_STATUSES];
+        // each one costs a command, a history event and a visibility task.
         if (!visibilityMilestonesOnly || next in FINDABLE_STATUSES) {
             Workflow.upsertTypedSearchAttributes(BUSINESS_STATUS.valueSet(next.name))
         }
@@ -561,20 +530,18 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private class BankRejected : RuntimeException("bank rejected the payment")
 
     /**
-     * The bank accepted the instruction and never confirmed, and polling could not get an
-     * answer either. Compensating here is a POLICY CHOICE, not a safe default: if the
-     * instruction did settle at the bank, releasing the reservation pays out twice. It is
-     * defensible only because every automated avenue has been exhausted first -- which is
-     * exactly what the polling above is for.
+     * The bank accepted the instruction, never confirmed it, and polling got no answer.
+     *
+     * The payout compensates on this outcome and is flagged `UNKNOWN_BANK_STATUS`. If the
+     * instruction did settle at the bank, releasing the reservation pays out twice.
      */
     private class BankStatusUnresolved :
         RuntimeException("bank never confirmed and polling was exhausted")
 
     private companion object {
         /**
-         * The patch id, and the only version of it. NEVER rename this string: the marker in
-         * every history already written is keyed on it, and a rename makes those histories
-         * look unpatched.
+         * The patch id and its version. The marker in every recorded history is keyed on this
+         * string, so renaming it makes those histories read as unpatched.
          */
         const val INLINE_SETTLEMENT_CHANGE = "inline-settlement-for-low-value"
         const val INLINE_SETTLEMENT_VERSION = 1
@@ -583,22 +550,19 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         const val VISIBILITY_MILESTONES_VERSION = 1
 
         /**
-         * The statuses a payout can be *found* sitting in, and therefore the only ones worth
-         * writing to the visibility store. Everything else is a transition that lasts
-         * milliseconds: real, recorded in the Query's history list and in the timeline, but
-         * never the answer to "show me the payouts currently in X".
+         * The statuses written to the visibility store, so a payout can be found in them by a
+         * visibility query. Other transitions are recorded only in the Query's history list
+         * and in the timeline.
          *
-         * The set is the union of three requirements, so it cannot be trimmed casually:
-         *  - the five states `awaitStatus` blocks on in both suites and in contract-test.sh
-         *    (AWAITING_APPROVAL, AWAITING_BANK_CONFIRMATION, COMPLETED, FAILED, CANCELLED) --
-         *    BusinessStatusListener is driven by this very upsert, so an unpublished state is
-         *    one the tests can no longer wait for;
-         *  - everything in StatusCollector.TRACKED, which is what the business-outcomes panel
-         *    is built from;
-         *  - the two states a payout genuinely lingers in without being parked on a signal:
-         *    POLLING_BANK_STATUS and COMPENSATING, so both stay filterable in Temporal Web.
+         * The set has to cover:
+         *  - the states `awaitStatus` blocks on in both test suites and in contract-test.sh
+         *    (AWAITING_APPROVAL, AWAITING_BANK_CONFIRMATION, COMPLETED, FAILED, CANCELLED),
+         *    since BusinessStatusListener is driven by this upsert;
+         *  - everything in StatusCollector.TRACKED, which the business-outcomes panel reads;
+         *  - POLLING_BANK_STATUS and COMPENSATING, the states a payout occupies for a while
+         *    without being parked on a signal.
          *
-         * setOf, not hashSetOf: documented iteration order, and it is only ever read.
+         * setOf, not hashSetOf: documented iteration order.
          */
         val FINDABLE_STATUSES = setOf(
             BusinessStatus.AWAITING_APPROVAL,
@@ -612,7 +576,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             BusinessStatus.UNKNOWN_BANK_STATUS,
         )
 
-        /** Server-defined, already registered -- checked with `temporal operator search-attribute list`. */
+        /** Server-defined; listed by `temporal operator search-attribute list`. */
         val TEMPORAL_CHANGE_VERSION = SearchAttributeKey.forKeywordList("TemporalChangeVersion")
 
         val PAYOUT_ID = SearchAttributeKey.forKeyword("payoutId")

@@ -12,14 +12,12 @@ import kotlin.test.fail
 /**
  * The scrape config has to cover every port the worker fleet can occupy.
  *
- * This is the one seam where a worker starting successfully still leaves no trace: Prometheus
- * only scrapes what it was told about, so an unlisted port means the JVM runs, polls the task
- * queue and does work, while the fleet count under-reports and every per-instance panel draws
- * a subset. Nothing errors. It happened: the list stopped at 8093 while five workers ran, and
- * "Live worker instances" read 4 -- three workers plus the API it was also counting.
+ * Prometheus only scrapes the targets it is given, so an unlisted port means the worker runs
+ * and does work while nothing about it is observable: the fleet count under-reports and every
+ * per-instance panel draws a subset, without an error.
  *
- * `WorkerSupervisor` owns the range and this asserts the config agrees with it, so raising
- * MAX_WORKERS without extending the targets fails here rather than in a demo.
+ * `WorkerSupervisor` owns the range, and this asserts the config agrees with it, so raising
+ * MAX_WORKERS without extending the targets fails here.
  */
 class PrometheusTargetsTest {
 
@@ -36,9 +34,8 @@ class PrometheusTargetsTest {
             ?: fail("no payout-demo-worker job in $config")
         val statics = job["static_configs"] as? List<Map<String, Any>> ?: fail("no static_configs")
 
-        // Grouped by the `role` label, because the API and the workers share one job and only
-        // that label tells them apart -- which is also what the fleet-count panel filters on,
-        // after it was found counting the API as a worker.
+        // Grouped by the `role` label: the API and the workers share one job, and that label
+        // is what tells them apart. The fleet-count panel filters on it.
         return statics.groupBy(
             { (it["labels"] as? Map<String, String>)?.get("role") ?: "none" },
             { entry -> (entry["targets"] as List<String>).map { it.substringAfterLast(':').toInt() } },
@@ -52,9 +49,8 @@ class PrometheusTargetsTest {
             targetsByRole()["worker"],
             "the worker targets must be exactly ${WorkerSupervisor.BASE_PORT}.." +
                 "${WorkerSupervisor.portFor(WorkerSupervisor.MAX_WORKERS)}. A port the fleet " +
-                "can reach but Prometheus does not scrape is a worker that runs invisibly; a " +
-                "port Prometheus scrapes but the fleet never uses is a target permanently " +
-                "down for no reason",
+                "can reach but Prometheus does not scrape is an unobservable worker; a port " +
+                "Prometheus scrapes but the fleet never uses is a permanently down target",
         )
     }
 

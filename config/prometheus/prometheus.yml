@@ -1,19 +1,18 @@
 global:
-  # 10s exactly: the Metrics tab's "watch the strip and the graph converge" moment
-  # depends on this value.
+  # 10s: the Metrics tab's panels are read against this interval.
   scrape_interval: 10s
   evaluation_interval: 10s
 
 scrape_configs:
   # Temporal server metrics -- `temporal server start-dev --metrics-port 8000`.
-  # The flag defaults to a RANDOM free port, so it must be set explicitly.
+  # The flag defaults to a random free port, so it must be set explicitly.
   - job_name: temporal-server
     metrics_path: /metrics
     static_configs:
       - targets: ['host.docker.internal:8000']
         labels: { group: server-metrics }
 
-  # Worker SDK metrics AND business metrics, both on the Spring actuator endpoint.
+  # Worker SDK metrics and business metrics, both on the Spring actuator endpoint.
   # The Temporal Spring Boot starter auto-wires its Tally scope to the Micrometer
   # registry whenever spring-boot-starter-actuator is present, so temporal_* SDK
   # metrics land here alongside the payout_* counters -- one scrape, not two.
@@ -22,21 +21,16 @@ scrape_configs:
   # allocates `basePort + id - 1` from basePort 8091, so worker N always lands on
   # 8090 + N.
   #
-  # The list must cover every port the fleet can reach, not the two or three it usually
-  # has. `make workers N=10` and the UI's "Start a worker" button both scale to the cap, and
-  # an unscraped worker is INVISIBLE rather than obviously missing: every panel keeps drawing,
-  # just for a subset of the fleet.
-  #
-  # 8091-8100 is exactly WorkerSupervisor.BASE_PORT through BASE_PORT + MAX_WORKERS - 1.
-  # Those are the same numbers, in two files, and `PrometheusTargetsTest` fails if they
-  # ever stop agreeing.
+  # The list covers every port the fleet can reach: 8091-8100 is WorkerSupervisor.BASE_PORT
+  # through BASE_PORT + MAX_WORKERS - 1. An unscraped worker still runs, but nothing about it
+  # is observable. `PrometheusTargetsTest` fails if the two files stop agreeing.
   - job_name: payout-demo-worker
     metrics_path: /demo-api/actuator/prometheus
     static_configs:
       - targets: ['host.docker.internal:8081']
         labels: { group: business-metrics, role: api }
-      # Worker JVMs, spawned and supervised by the API. Expected DOWN when the fleet is
-      # scaled below that number -- a down target here means "not running", not "broken".
+      # Worker JVMs, spawned and supervised by the API. A target is down whenever the fleet is
+      # scaled below that number.
       - targets:
           - 'host.docker.internal:8091'
           - 'host.docker.internal:8092'

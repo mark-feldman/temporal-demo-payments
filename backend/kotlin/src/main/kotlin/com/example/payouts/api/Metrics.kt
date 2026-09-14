@@ -7,8 +7,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Business metrics, emitted from the API layer -- never from workflow code, where a
- * counter would double-count on every replay.
+ * Business metrics, emitted from the API layer rather than from workflow code, where a
+ * counter would double-count on replay.
  */
 @Component
 class BusinessMetrics(private val registry: MeterRegistry) {

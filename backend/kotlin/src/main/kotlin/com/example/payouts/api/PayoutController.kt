@@ -71,8 +71,8 @@ class PayoutController(
         val stub = client.newWorkflowStub<PayoutWorkflow> {
             setWorkflowId(workflowId)
             setTaskQueue(TASK_QUEUE)
-            // The default AllowDuplicate permits a second payout once the first has CLOSED.
-            // For a talk about not paying twice, that is the wrong answer.
+            // REJECT_DUPLICATE, not the default AllowDuplicate, which permits a second payout
+            // once the first has closed.
             setWorkflowIdReusePolicy(WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE)
             setStaticSummary("Payout $payoutId - ${body.scenario}")
             setStaticDetails(
@@ -102,7 +102,7 @@ class PayoutController(
         )
     }
 
-    /** Backed by the workflow Query, never a backend cache: Temporal holds the state. */
+    /** Backed by the workflow Query rather than a cache: Temporal holds the state. */
     @GetMapping("/payouts/{workflowId}/status")
     fun status(@PathVariable workflowId: String): ResponseEntity<PayoutStatusResponse> = runCatching {
         ResponseEntity.ok(client.newWorkflowStub(PayoutWorkflow::class.java, workflowId).currentStatus())

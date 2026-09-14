@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full reset: clears scenario config AND workflow history. The API's /demo-api/reset
+# Full reset: clears scenario config and workflow history. The API's /demo-api/reset
 # only does the former -- wiping history needs a fresh dev-server database.
 set -uo pipefail
 cd "$(dirname "$0")/.."

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The demo backend contract, executable. Any future SDK implementation must pass this
-# same script -- that is what makes it a contract rather than an integration test.
+# The demo backend contract, executable. Any SDK implementation must pass this same script.
+# It drives the HTTP surface only, never language internals.
 set -uo pipefail
 BASE="${BASE:-http://localhost:8081}/demo-api"
 PASS=0; FAIL=0
@@ -44,9 +44,8 @@ S=$(await "$W" "COMPLETED" 15)
 
 # 3 -- approval signal advances the workflow
 W=$(start '{"scenario":"ct-approval","amountMinor":250000}' | jqv "['workflowId']")
-# Asserted, not just awaited. "3" below only checks the workflow is no longer waiting, which
-# is equally true of one that never waited at all -- so an approval gate that stopped firing
-# would have read PASS. The gate is the behaviour under test; check it happened.
+# 3a asserts the workflow parked on approval. "3" below only checks it is no longer waiting,
+# which is also true of a workflow that never waited.
 P=$(await "$W" "AWAITING_APPROVAL" 20)
 T=$(status "$W" | jqv "['approvalTier']")
 [[ "$P" == "AWAITING_APPROVAL" && "$T" == "SENIOR" ]] \
@@ -61,9 +60,7 @@ signal "$W" bank-status '{"status":"COMPLETED"}'
 W=$(start '{"scenario":"ct-retry","amountMinor":25000,"behavior":"FAIL_TRANSIENT","transientFailures":2}' | jqv "['workflowId']")
 await "$W" "AWAITING_BANK_CONFIRMATION" 30 >/dev/null
 A=$(status "$W" | jqv "['railAttempts']")
-# Exactly three, not "more than one": transientFailures=2 means two failures then the attempt
-# that lands, so an implementation that failed once and an implementation that failed five
-# times are both wrong, and `-gt 1` could not tell either of them from correct.
+# Exactly three: transientFailures=2 means two failures then the attempt that lands.
 [[ "${A:-0}" -eq 3 ]] && ok "5 transient failure produces retries (attempt=$A)" || bad "5 retries" "attempt=$A, expected 3"
 signal "$W" bank-status '{"status":"COMPLETED"}'
 
@@ -71,8 +68,8 @@ signal "$W" bank-status '{"status":"COMPLETED"}'
 W=$(start '{"scenario":"ct-permanent","amountMinor":25000,"behavior":"FAIL_PERMANENT"}' | jqv "['workflowId']")
 S=$(await "$W" "FAILED,CANCELLED" 30)
 HIST=$(status "$W" | jqv "['history']")
-# failureCategory is part of the assertion, not decoration: "failed and compensated" is also
-# true of a payout that failed for an entirely different reason.
+# failureCategory is part of the assertion: "failed and compensated" is also true of a payout
+# that failed for a different reason.
 FC=$(status "$W" | jqv "['failureCategory']")
 [[ "$S" == "FAILED" && "$FC" == "RAIL_PERMANENT" && "$HIST" == *COMPENSAT* ]] \
   && ok "6 permanent failure triggers compensation" || bad "6 compensation" "$S / $FC / $HIST"
@@ -120,21 +117,19 @@ K=$(status "$W" | python3 -c 'import sys,json;print(",".join(sorted(json.load(sy
   && ok "7d status response always carries every field" || bad "7d contract shape" "$K"
 
 # 9 -- how the bank confirms depends on the amount
-# Below $100 the rail answers inline: no callback is sent here, and none is needed. This also
-# pins the boundary from the other side -- test 2 uses 25000 and DOES park on the callback.
+# Below the sync-settlement threshold the rail answers inline and no callback is sent. Test 2
+# uses 25000 and does park on the callback, which pins the boundary from the other side.
 #
-# The PATH is the contract, not the outcome. An inline settlement answers COMPLETED or
-# REJECTED and this implementation splits them 80/20, so asserting COMPLETED asserts a coin
-# toss -- which is exactly how this line first failed. A different implementation may pick a
-# different mix and still be correct.
+# The path is the contract, not the outcome: an inline settlement answers COMPLETED or
+# REJECTED, and the split between them is an implementation choice.
 W=$(start '{"scenario":"ct-inline","amountMinor":4200}' | jqv "['workflowId']")
 S=$(await "$W" "COMPLETED,FAILED" 40)
 HIST=$(status "$W" | jqv "['history']")
 FC=$(status "$W" | jqv "['failureCategory']")
 INLINE=no
 [[ "$HIST" == *SETTLING_WITH_BANK* && "$HIST" != *AWAITING_BANK_CONFIRMATION* ]] && INLINE=yes
-# Whichever way it went, the record has to be coherent: settled means no failure, refused
-# means BANK_REJECTED and nothing else.
+# The record has to be coherent either way: settled means no failure, refused means
+# BANK_REJECTED.
 COHERENT=no
 [[ ( "$S" == "COMPLETED" && "$FC" == "NONE" ) || ( "$S" == "FAILED" && "$FC" == "BANK_REJECTED" ) ]] && COHERENT=yes
 [[ "$INLINE" == "yes" && "$COHERENT" == "yes" ]] \

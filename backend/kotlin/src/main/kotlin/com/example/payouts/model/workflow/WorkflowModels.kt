@@ -10,9 +10,9 @@ import com.example.payouts.model.domain.Region
 import kotlinx.serialization.Serializable
 
 /**
- * Single-param request/response on every boundary. This is not style: the kotlinx
- * PayloadConverter only sees the runtime class when serialising, so every top-level
- * type must be a concrete @Serializable data class. No sealed types, no bare generics.
+ * Single-param request/response on every boundary. The kotlinx PayloadConverter only sees the
+ * runtime class when serialising, so every top-level type must be a concrete @Serializable
+ * data class: no sealed types and no bare generics.
  */
 @Serializable
 data class ProcessPayoutRequest(

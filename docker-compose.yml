@@ -1,6 +1,5 @@
-# Only three things run in Docker. The Temporal server and the Spring Boot app run on the
-# host, which is what makes the kill-the-app moment a plain `kill -9` and keeps Gradle's
-# edit-run loop fast.
+# Only three services run in Docker. The Temporal server and the Spring Boot app run on the
+# host, so stopping either is a plain `kill -9` and Gradle's edit-run loop stays fast.
 services:
   caddy:
     image: caddy:2-alpine

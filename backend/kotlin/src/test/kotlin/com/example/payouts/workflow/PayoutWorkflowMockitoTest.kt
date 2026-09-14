@@ -32,7 +32,7 @@ import kotlin.test.assertEquals
  * Two Kotlin-specific traps are on display:
  *
  *  - `withSettings().withoutAnnotations()` is mandatory. Without it Mockito copies
- *    `@ActivityInterface` onto the generated mock CLASS, and the SDK's registration then sees
+ *    `@ActivityInterface` onto the generated mock class, and the SDK's registration then sees
  *    an annotated class rather than an annotated interface and rejects it.
  *  - Every method that the workflow calls must be stubbed. Mockito returns null by default,
  *    and these interfaces all declare non-null Kotlin return types, so an unstubbed method is

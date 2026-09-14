@@ -17,10 +17,8 @@ class TemporalConfig {
 
     /**
      * Spring auto-registers a kotlinx.serialization HTTP converter for @Serializable types,
-     * and its default Json omits any field still holding its declared default. That quietly
-     * dropped `approvalTier: NONE` and `failureCategory: NONE` from API responses, and the UI
-     * read the absent field as undefined. An API contract should not change shape based on
-     * the values in it, so encodeDefaults is forced on.
+     * and its default Json omits any field still holding its declared default. encodeDefaults
+     * is forced on so the response shape does not change with the values in it.
      */
     @Bean
     fun jsonHttpConverter(): KotlinSerializationJsonHttpMessageConverter =
@@ -29,8 +27,8 @@ class TemporalConfig {
         )
 
     /**
-     * Named `mainDataConverter` deliberately: the Spring Boot starter fails on ambiguity
-     * when more than one DataConverter bean exists and resolves the primary by this name.
+     * Named `mainDataConverter`: the Spring Boot starter resolves the primary DataConverter by
+     * this name and fails on ambiguity when more than one such bean exists.
      */
     @Bean
     fun mainDataConverter(): DataConverter =
@@ -43,8 +41,7 @@ class TemporalConfig {
      * together.
      *
      * This overrides the starter's own MetricsScopeAutoConfiguration bean of the same name
-     * (hence spring.main.allow-bean-definition-overriding), so that the report interval is
-     * explicit and short enough to watch during a demo.
+     * (hence spring.main.allow-bean-definition-overriding) so the report interval is explicit.
      */
     @Bean(name = ["temporalMetricsScope"], destroyMethod = "close")
     fun temporalMetricsScope(registry: MeterRegistry): Scope =

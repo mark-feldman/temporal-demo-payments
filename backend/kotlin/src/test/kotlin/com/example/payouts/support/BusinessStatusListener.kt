@@ -43,7 +43,7 @@ import java.util.concurrent.TimeoutException
  *
  * ## Threading
  *
- * [record] runs on a WORKFLOW thread, so completion goes through `completeAsync`:
+ * [record] runs on a workflow thread, so completion goes through `completeAsync`:
  * `CompletableFuture.complete` runs dependent stages on the completing thread, and a caller
  * who chained anything blocking onto one of these futures would otherwise run it inside the
  * workflow.

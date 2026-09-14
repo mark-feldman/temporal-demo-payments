@@ -10,7 +10,7 @@ spring:
     connection:
       # NOT `local`. The starter's ServiceStubsTemplate special-cases that value and calls
       # WorkflowServiceStubs.newLocalServiceStubs(), which silently discards the metrics
-      # scope AND the stub customizers. Spelling the address out takes the default branch,
+      # scope and the stub customizers. Spelling the address out takes the default branch,
       # which applies both -- this is the difference between having SDK metrics and not.
       target: 127.0.0.1:7233
     namespace: default
@@ -26,29 +26,20 @@ spring:
     workers:
       - task-queue: payouts
         name: payout-worker
-        # Set explicitly, not because the defaults are wrong, but because the high-load
-        # preset is ~175 activity executions/sec against a single worker on a developer
-        # machine -- the limits should be visible rather than implied.
+        # Set explicitly so the limits are visible rather than implied.
         capacity:
           max-concurrent-workflow-task-executors: 200
           max-concurrent-activity-executors: 200
-          # Pollers autoscale rather than sitting at a fixed count. 50 is the CEILING under
-          # backlog, not a constant: idle workers hold 1-2 long polls instead of 100.
+          # Pollers autoscale. max is a ceiling reached under backlog, not a constant: an idle
+          # worker holds the minimum.
           #
-          # Raised from 20 because dispatch was measured to scale linearly with poller count at
-          # a fixed per-delivery cost -- scaling 10 workers down to 4 cut activity pollers
-          # 200 -> 80 and dispatch 114 -> 59/s. Pollers are the dial that moves task delivery
-          # here; executor slots are 82-87% idle and are not.
-          #
-          # These are mutually exclusive with max-concurrent-workflow-task-pollers /
-          # max-concurrent-activity-task-pollers -- setting both fails context startup at the
+          # Mutually exclusive with max-concurrent-workflow-task-pollers and
+          # max-concurrent-activity-task-pollers. Setting both fails context startup at the
           # `temporalWorkers` bean with "workflowTaskPollersBehavior and
-          # maxConcurrentWorkflowTaskPollers are mutually exclusive"
-          # (WorkerOptions.validateAndBuildWithDefaults, verified on SDK 1.38.0). So the fixed
-          # counts are deleted, not commented out.
+          # maxConcurrentWorkflowTaskPollers are mutually exclusive".
           #
           # min for workflow tasks cannot be 1: pollers alternate between the sticky and
-          # non-sticky queues, and the SDK silently raises 1 to 2.
+          # non-sticky queues, and the SDK raises 1 to 2.
           workflow-task-pollers-configuration:
             poller-behavior-autoscaling:
               enabled: true
@@ -64,7 +55,7 @@ spring:
 
 server:
   port: 8081
-  # Caddy's catch-all belongs to Temporal, so Spring must stay inside the demo namespace.
+  # Caddy gives Temporal the catch-all, so Spring stays inside the demo's prefixes.
   error:
     path: /demo-api/error
 

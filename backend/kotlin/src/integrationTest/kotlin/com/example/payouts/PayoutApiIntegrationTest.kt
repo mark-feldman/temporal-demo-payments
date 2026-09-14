@@ -43,16 +43,14 @@ import kotlin.test.assertTrue
  * controllers, real activity beans, the real ScenarioStore, the production kotlinx
  * DataConverter -- against the SDK's in-memory test server.
  *
- * There is no time skipping here: the activity mocks really do sleep, and a payout really
- * does take several seconds. That is the cost of exercising the assembled application, and
- * why the deadline paths (30s approval, 45s bank) live in the unit suite instead.
+ * There is no time skipping here: the activity stubs sleep and a payout takes several
+ * seconds, so the deadline paths (30s approval, 45s bank) live in the unit suite instead.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @Execution(ExecutionMode.CONCURRENT)
-// Spring Boot switches metrics export OFF in tests by default, so without this there is no
-// PrometheusMeterRegistry, no /actuator/prometheus endpoint, and the scrape 404s -- which
-// looks exactly like a routing mistake and is not.
+// Spring Boot switches metrics export off in tests by default, so without this there is no
+// PrometheusMeterRegistry, no /actuator/prometheus endpoint, and the scrape 404s.
 @AutoConfigureObservability
 class PayoutApiIntegrationTest {
 
@@ -121,11 +119,10 @@ class PayoutApiIntegrationTest {
      * Blocks until the workflow transitions into one of [wanted], then reads its state once
      * over HTTP.
      *
-     * Event-driven, not polled. The in-process worker runs [BusinessStatusListener], which is
-     * notified by the workflow's own `upsertTypedSearchAttributes` call at the moment of the
-     * transition. The HTTP GET that follows is a single request, and it is the assertion --
-     * the listener only decides *when* to make it, so the contract is still checked over the
-     * same API the frontend uses.
+     * Event-driven, not polled. The in-process worker runs [BusinessStatusListener], which the
+     * workflow's own `upsertTypedSearchAttributes` call notifies at the moment of the
+     * transition. The single HTTP GET that follows is the assertion; the listener only decides
+     * when to make it, so the contract is checked over the same API the frontend uses.
      *
      * Every state waited on here is one the workflow parks on -- the two AWAITING_* states
      * and the terminal ones -- so the single read cannot land after a further transition.
@@ -204,13 +201,10 @@ class PayoutApiIntegrationTest {
 
     @Test
     fun `a low-value payout resolves over HTTP without any signal being sent`() {
-        // Deliberately never signalled. Before the settlement split this test could not exist:
-        // the payout would sit out the 45s bank deadline and resolve by polling, ~67s later.
-        //
-        // What is asserted is the PATH, not the outcome. This runs the production activity,
-        // which settles 80/20, so pinning COMPLETED would be pinning a coin toss -- it passed
-        // once and then failed on the next run. Both outcomes are correct here; the unit suite
-        // covers each of them deterministically through the injected-failure seam.
+        // No signal is sent. The assertion is on the path, not the outcome: this runs the
+        // production activity, whose settle-or-refuse split is weighted, so either outcome is
+        // correct here. The unit suite covers each one deterministically through the
+        // injected-failure seam.
         val started = start(StartPayoutBody(scenario = "it-inline", amountMinor = 4_200))
         val final = awaitStatus(started.workflowId, BusinessStatus.COMPLETED, BusinessStatus.FAILED)
 
@@ -224,7 +218,7 @@ class PayoutApiIntegrationTest {
             history.none { it.startsWith("AWAITING_BANK_CONFIRMATION") },
             "a low-value payout must not park on a callback: $history",
         )
-        // Whichever way the roll went, the record has to say so coherently.
+        // Either outcome has to be recorded coherently.
         when (final["status"]) {
             "COMPLETED" -> assertEquals("NONE", final["failureCategory"])
             else -> assertEquals("BANK_REJECTED", final["failureCategory"], "a refusal, not some other failure")
@@ -328,8 +322,7 @@ class PayoutApiIntegrationTest {
         // 7-10 polls with backoff, all in real time, then the unwind.
         val final = awaitStatus(started.workflowId, BusinessStatus.FAILED, BusinessStatus.COMPLETED, timeout = Duration.ofSeconds(240))
         assertEquals("FAILED", final["status"])
-        // Releasing a reservation on an instruction that MAY have settled is a policy call.
-        // The record has to say which call was made.
+        // The flag records that the instruction may already have settled.
         assertEquals("UNKNOWN_BANK_STATUS", final["failureCategory"])
         assertTrue(
             (final["reversalReference"] as String).isNotBlank(),
@@ -344,9 +337,9 @@ class PayoutApiIntegrationTest {
         val started = start(StartPayoutBody(scenario = "it-shape", amountMinor = 25_000))
         val body = statusJson(started.workflowId)
 
-        // The regression this guards: kotlinx omits fields still holding their declared
-        // default unless encodeDefaults is forced on, which silently dropped approvalTier
-        // and failureCategory and left the UI reading undefined. Only observable over HTTP.
+        // kotlinx omits fields still holding their declared default unless encodeDefaults is
+        // on, which drops approvalTier and failureCategory from the response. Only observable
+        // over HTTP.
         listOf(
             "payoutId", "status", "currentStep", "approvalTier", "failureCategory",
             "railAttempts", "bankReference", "usdEquivalentMinor", "reversalReference", "history",

@@ -46,9 +46,8 @@ data class MarkPayoutResponse(val recorded: Boolean)
 data class ValidateFxQuoteRequest(val payoutId: String, val amount: Money)
 
 /**
- * The one mock that returns something the workflow reasons about: the approval
- * threshold is evaluated against usdEquivalentMinor, so non-USD payouts get a
- * single comparable number.
+ * The approval threshold is evaluated against usdEquivalentMinor, so payouts in different
+ * currencies are compared as one number.
  */
 @Serializable
 data class ValidateFxQuoteResponse(
@@ -65,7 +64,7 @@ data class SubmitToRailRequest(
     val rail: Rail,
     val region: Region,
     val amount: Money,
-    /** Stable across every retry. That stability is the whole point of the Tab 2 demo. */
+    /** Stable across every retry of the rail submission. */
     val idempotencyKey: String,
 )
 
@@ -92,7 +91,7 @@ data class ReverseRailRequest(
 @Serializable
 data class ReverseRailResponse(val reversed: Boolean, val reversalReference: String)
 
-// ---- bank status (mock callback source, used by the simulation runner) ----
+// ---- bank status ----
 
 @Serializable
 data class BankStatusProbeRequest(val payoutId: String, val bankReference: String)
@@ -107,11 +106,7 @@ data class BankSettlementRequest(
     val idempotencyKey: String,
 )
 
-/**
- * The bank's inline answer. Always COMPLETED or REJECTED -- never ACCEPTED or UNKNOWN, which
- * are the out-of-band states and mean "ask again later". A synchronous settlement that could
- * answer "don't know" would just be the callback path with extra steps.
- */
+/** The bank's inline answer: always COMPLETED or REJECTED, never ACCEPTED or UNKNOWN. */
 @Serializable
 data class BankSettlementResponse(val status: BankStatus)
 

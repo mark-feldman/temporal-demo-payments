@@ -10,9 +10,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * The boundary decides whether a payout waits on a signal at all, so it is worth pinning
- * exactly. Note the asymmetry against [ApprovalThresholds]: `settlesSynchronously` is a strict
- * `<`, so the threshold value itself takes the callback path.
+ * The boundary decides whether a payout waits on a signal. Note the asymmetry against
+ * [ApprovalThresholds]: `settlesSynchronously` is a strict `<`, so the threshold value itself
+ * takes the callback path.
  */
 class SettlementThresholdsTest {
 
@@ -35,17 +35,14 @@ class SettlementThresholdsTest {
 
     @Test
     fun `the settlement band sits below the approval band, so the two nest`() {
-        // Under \$100 inline, \$100-\$500 callback, over \$500 callback plus a human. If the
-        // sync threshold ever rose above the L1 threshold the bands would cross, and a payout
-        // could need a human while also being settled inline -- approval would be gating a
-        // wait that no longer exists.
+        // If the sync threshold rose above the L1 threshold the bands would cross, and a
+        // payout could require approval while also being settled inline.
         assertTrue(
             SettlementThresholds.SYNC_BELOW_MINOR < ApprovalThresholds.L1_FROM_MINOR,
             "inline settlement must stop before approval starts",
         )
-        // The band between them also has to be non-empty, or nothing exercises "waits for a
-        // callback but needs no human" -- which is the band the simulator's unknown-status
-        // scenario has to sit in.
+        // The band between them has to be non-empty: it is where a payout waits for a
+        // callback without requiring approval, which the unknown-status scenario uses.
         assertFalse(
             SettlementThresholds.settlesSynchronously(ApprovalThresholds.L1_FROM_MINOR - 1),
             "the callback-without-approval band must exist",

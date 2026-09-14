@@ -6,13 +6,7 @@ enum class Rail { HTTP, SFTP, MQ }
 
 enum class Region { SG, CN, AU }
 
-/**
- * The eighteen canonical states. Eight of them form the happy path.
- *
- * (Seventeen before `SETTLING_WITH_BANK`. The count in this comment said "sixteen" while the
- * enum held seventeen, and `backend/contract/demo-backend-contract.md` repeated it -- both are
- * corrected here.)
- */
+/** The eighteen canonical states. Eight of them form the happy path. */
 enum class BusinessStatus {
     RECEIVED,
     VALIDATING,
@@ -23,7 +17,7 @@ enum class BusinessStatus {
     APPROVED,
     SUBMITTING_TO_BANK,
     SUBMITTED_TO_BANK,
-    /** Low-value: the rail answers inline, so there is no callback to wait for. */
+    /** Low-value: the rail answers inline, with no callback to wait for. */
     SETTLING_WITH_BANK,
     AWAITING_BANK_CONFIRMATION,
     POLLING_BANK_STATUS,
@@ -48,12 +42,7 @@ enum class FailureCategory {
     RAIL_PERMANENT,
     BANK_REJECTED,
     APPROVAL_TIMEOUT,
-    /**
-     * A human looked at it and said no -- distinct from APPROVAL_TIMEOUT, where nobody
-     * looked. Recorded as VALIDATION until the simulator started declining 20% of approvals,
-     * at which point a fifth of every run showed up on the dashboard as a validation failure
-     * that had nothing to do with validation.
-     */
+    /** An approver refused the payout. Distinct from APPROVAL_TIMEOUT, where none responded. */
     APPROVAL_DECLINED,
     UNKNOWN_BANK_STATUS,
 }
@@ -71,24 +60,21 @@ data class Money(val amountMinor: Long, val currency: String) {
 /**
  * Where the bank answers inline instead of calling back.
  *
- * A low-value payout is settled by a single synchronous call to the rail: the instruction is
- * submitted and the answer comes back in the same activity, so there is nothing to wait for
- * and no 45s deadline to burn. Above the threshold the instruction is confirmed out of band,
- * which is the durable-wait-on-a-signal path -- and the one worth demonstrating.
+ * Below the threshold a payout is settled by a single call to the rail, which returns the
+ * answer in the same activity. At or above it, the instruction is confirmed out of band and
+ * the workflow waits durably on the callback signal.
  *
- * Read from the workflow's own input, never from configuration: the branch has to replay
- * identically, and `request.amount` is recorded in WorkflowExecutionStarted. Deciding it from
- * `ScenarioStore` would be a non-determinism bug.
+ * The bands nest inside the approval bands:
  *
- * The two bands nest inside the approval bands rather than cutting across them:
+ *     < $100      settles inline, no approver
+ *     $100-$500   callback, no approver
+ *     > $500      callback and an approver (see [ApprovalThresholds])
  *
- *     < $100      settles inline, no human
- *     $100-$500   callback, no human
- *     > $500      callback, and a human (see [ApprovalThresholds])
+ * Read from the workflow's input, which is recorded in WorkflowExecutionStarted and so replays
+ * identically. Reading it from `ScenarioStore` instead would be a non-determinism bug.
  *
- * $100 sits deliberately BELOW the $250 the demo's manual scenarios start with, so scenarios
- * 1, 2, 3 and 5 keep their durable bank wait and the Bank buttons in the UI still have
- * something to signal. `DemoScenarioDefaultsTest` holds them above it.
+ * The demo's manual scenarios all start above this threshold, so they keep their bank wait;
+ * `DemoScenarioDefaultsTest` asserts that.
  */
 object SettlementThresholds {
     const val SYNC_BELOW_MINOR = 10_000L // $100.00

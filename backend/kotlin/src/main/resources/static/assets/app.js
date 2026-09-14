@@ -8,9 +8,9 @@ const api = (path, opts) => fetch(`/demo-api${path}`, {
 }).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
 
 // ---------------------------------------------------------------------------
-// Theme. Temporal Web 2.45.3 has no prefers-color-scheme rule -- it switches on
-// [data-theme] only. Because Caddy puts both panes on one origin, we can read the
-// iframe's own root attribute and follow it exactly.
+// Theme. Temporal Web switches on [data-theme] only, with no prefers-color-scheme rule.
+// Caddy puts both panes on one origin, so this reads the iframe's root attribute and
+// follows it.
 // ---------------------------------------------------------------------------
 function useTemporalTheme(iframeRef) {
   useEffect(() => {
@@ -19,9 +19,8 @@ function useTemporalTheme(iframeRef) {
     const attach = () => {
       const root = iframeRef.current?.contentDocument?.documentElement
       if (!root) return false
-      // On a fresh machine Temporal Web has no saved preference and renders light,
-      // against our dark-first chrome. Push dark in ONCE so the two panes match out
-      // of the box; after that we only follow, so flipping it live still works.
+      // With no saved preference Temporal Web renders light. Dark is pushed in once, so
+      // the two panes match; after that this only follows, so flipping it live works.
       if (!seeded) {
         seeded = true
         if (!root.getAttribute('data-theme')) root.setAttribute('data-theme', 'dark')
@@ -52,9 +51,9 @@ const isTerminal = s => ['COMPLETED', 'FAILED', 'CANCELLED', 'UNKNOWN_BANK_STATU
 
 const Eyebrow = ({ children }) => html`<div class="eyebrow mb-2">${children}</div>`
 
-// Workers run as separate JVMs supervised by the API, so killing one is a real SIGKILL
-// and the API survives to start a replacement. In-flight workflow tasks time out, and the
-// new worker rebuilds state by replaying history.
+// Workers are separate JVMs supervised by the API, so killing one is a SIGKILL and the API
+// survives to start a replacement. In-flight workflow tasks time out and the new worker
+// rebuilds state by replaying history.
 function WorkerControl() {
   const [fleet, setFleet] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -63,9 +62,8 @@ function WorkerControl() {
     const poll = () => api('/workers').then(setFleet).catch(() => setFleet(null))
     poll(); const t = setInterval(poll, 2000); return () => clearInterval(t)
   }, [])
-  // The failure is SHOWN, not swallowed. This used to be a bare try/finally, so a rejected
-  // request cleared `busy` and left no trace -- the button simply came back and nothing had
-  // happened, which is indistinguishable from a click that missed.
+  // A rejected request is shown rather than swallowed: without it the button simply comes
+  // back and nothing has happened.
   const act = async (path) => {
     setBusy(true); setFailed('')
     try { setFleet(await api(path, { method: 'POST' })) }
@@ -73,9 +71,8 @@ function WorkerControl() {
     finally { setBusy(false) }
   }
   const running = fleet?.running ?? 0
-  // The cap comes from the fleet response rather than being restated here: WorkerSupervisor
-  // owns it, because it has to agree with the Prometheus target range. Showing it keeps
-  // "Start a worker" from going quietly dead at the ceiling mid-demo.
+  // The cap comes from the fleet response rather than being restated here; WorkerSupervisor
+  // owns it, and it has to agree with the Prometheus target range.
   const max = fleet?.max ?? 10
   const atCap = running >= max
   return html`
@@ -108,8 +105,8 @@ function WorkerControl() {
     </div>`
 }
 
-// Temporal Web has no top-level Workers view: workers are listed on the task-queue page,
-// and "Deployments" is Worker Deployments (versioning), which is a different thing.
+// Workers are listed on the task-queue page. "Deployments" is Worker Deployments
+// (versioning), which is a different view.
 const VIEWS = [
   { label: 'Workflows', path: '/namespaces/default/workflows',
     title: 'All workflow executions' },
@@ -141,9 +138,9 @@ const SCENARIOS = [
     blurb: 'Validate, reserve, FX, select rail, submit, confirm, complete. The baseline every other scenario diverges from.',
     defaults: { scenario: 'successful', amountMinor: 25000, behavior: 'PASS' },
     notes: [
-      'The happy path: the whole business process expressed as one workflow function.',
-      'Every step appears as an event in the history on the right — no log correlation needed.',
-      'Steps carry business-language summaries, so the timeline reads as a payment.',
+      'The business process is one workflow function; the steps are ordinary sequential code.',
+      'Each activity appears in the history on the right as scheduled, started and completed — no log correlation needed.',
+      'Activities carry summaries, so the history reads in business terms rather than method names.',
     ],
   },
   {
@@ -151,9 +148,9 @@ const SCENARIOS = [
     blurb: 'The rail times out twice, then accepts. Same idempotency key on every attempt.',
     defaults: { scenario: 'transient', amountMinor: 25000, behavior: 'FAIL_TRANSIENT', transientFailures: 2 },
     notes: [
-      'There is no retry loop in the code. The policy is declarative, next to the activity.',
-      'The final attempt count and the same idempotency key are both visible on the activity.',
-      'Failed attempts are not separate history events — the backoff shows as the gap between ActivityTaskScheduled and ActivityTaskStarted.',
+      'There is no retry loop in the code: the retry policy is declared on the activity stub.',
+      'The final attempt count and the idempotency key are both on the activity; every attempt reuses that key.',
+      'Retries add no history events: the backoff is the gap between ActivityTaskScheduled and ActivityTaskStarted.',
     ],
   },
   {
@@ -161,9 +158,9 @@ const SCENARIOS = [
     blurb: 'Non-retryable rail rejection triggers saga compensation: reserved funds released, payout marked failed.',
     defaults: { scenario: 'permanent', amountMinor: 25000, behavior: 'FAIL_PERMANENT' },
     notes: [
-      'A non-retryable failure differs from retry exhaustion: Temporal stops immediately.',
-      'Compensation is ordinary code in the same workflow, not a separate cleanup job.',
-      'The compensation activity has no attempt cap by design — giving up would strand funds.',
+      'A non-retryable failure stops on the first attempt, unlike retry exhaustion.',
+      'Compensation is ordinary code in the same workflow, and runs in reverse registration order.',
+      'The compensation activities are scheduled with no attempt cap, so they retry until they succeed.',
     ],
   },
   {
@@ -171,10 +168,10 @@ const SCENARIOS = [
     blurb: 'Amount above the threshold blocks on a signal. Approve it, reject it, or let the timer fire.',
     defaults: { scenario: 'approval', amountMinor: 250000, behavior: 'PASS' },
     notes: [
-      'The workflow is waiting durably: no polling loop and no thread held open.',
-      'Kill the application entirely and it is still waiting when the process returns.',
-      'The deadline is a workflow timer, so the timeout path is a branch in code, not a cron job.',
-      'After approval it still waits on the bank callback — the controls below follow whatever the workflow is blocked on.',
+      'The workflow waits durably on a signal: no polling loop and no thread held open.',
+      'Stop the application entirely and it is still waiting when the process returns.',
+      'The 30s deadline is a workflow timer, so the timeout is a branch in the workflow code.',
+      'After approval it waits on the bank callback; the controls above offer whichever signal the workflow is blocked on.',
     ],
   },
   {
@@ -187,10 +184,10 @@ const SCENARIOS = [
       { id: 'never',     label: 'Bank never answers',      cfg: { pollingNeverResolves: true } },
     ],
     notes: [
-      'The instruction was accepted but never confirmed, so the callback never arrives.',
-      'Rather than escalate, the workflow polls the bank — the retry policy on the poll activity is the polling loop.',
-      'Whatever the bank eventually reports drives the outcome: completed, or rejected and compensated.',
-      'Only if polling is exhausted does it compensate on an unresolved status — flagged UNKNOWN_BANK_STATUS, because releasing funds on an instruction that may have settled is a policy call, not a safe default.',
+      'The instruction is accepted and never confirmed, so the wait ends on its 45s deadline.',
+      'The workflow then polls the bank rather than escalating: the retry policy on the poll activity is the polling loop.',
+      'Whatever the bank reports drives the outcome — completed, or rejected and compensated.',
+      'If polling is exhausted the payout compensates, flagged UNKNOWN_BANK_STATUS, since the instruction may already have settled.',
     ],
   },
 ]
@@ -227,14 +224,10 @@ function StatusCard({ status, error }) {
 }
 
 function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
-  // DERIVED from the selected scenario, with edits kept per scenario -- not one value seeded
-  // from `scenario.defaults`. Preact diffs this component by type and position and it has no
-  // key, so switching scenarios reuses the same instance and a useState initialiser never runs
-  // again: the previous scenario's amount stayed in the field. Reaching scenario 4 from any of
-  // the others therefore started the approval demo at $250, under the $500 L1 threshold, so the
-  // workflow ran past AWAITING_APPROVAL and the Approve / Reject buttons -- which follow the
-  // live status, not the selected scenario -- never appeared. Deriving it makes that
-  // unrepresentable, and an amount you typed survives a trip to another scenario and back.
+  // The amount is derived from the selected scenario, with edits kept per scenario, so
+  // switching scenarios always shows that scenario's amount. Preact diffs this component by
+  // type and position and it has no key, so the instance is reused across a switch and a
+  // useState initialiser would only run once.
   const [edits, setEdits] = useState({})
   const amount = edits[scenario.id] ?? scenario.defaults.amountMinor
   const setAmount = value => setEdits(prev => ({ ...prev, [scenario.id]: value }))
@@ -279,12 +272,10 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
 
       <div class="panel p-4 space-y-3">
         <${Eyebrow}>Scenario controls<//>
-        <!-- Rail, region and currency are supplied by the server defaults. They were controls
-             once, but none of them changed a branch, a timeout or an outcome, and two inert
-             dropdowns are worse than none in a demo that argues everything on screen is real. -->
-        <!-- The amount is not just a number on the screen: under 10000 minor the rail
-             answers inline and there is no callback to signal, so the Bank buttons below
-             will not appear. Scenario defaults all sit above that deliberately. -->
+        <!-- Rail, region and currency come from the server defaults; none of them changes a
+             branch, a timeout or an outcome. -->
+        <!-- Under 10000 minor the rail answers inline and there is no callback to signal, so
+             the Bank buttons below do not appear. Every scenario default sits above that. -->
         <${Field} label="Amount (minor units, USD) — under 10000 settles inline, no callback">
           <input class="input" type="number" value=${amount} onInput=${e => setAmount(e.target.value)} />
         <//>
@@ -302,9 +293,9 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
       ${current && html`
         <div class="panel p-4 space-y-2">
           <${Eyebrow}>Interact with this execution<//>
-          <!-- Controls follow the live status rather than the scenario, so a signal button
-               is offered exactly when the workflow is actually blocked waiting for it. The
-               approval path still needs a bank callback afterwards. -->
+          <!-- Controls follow the live status rather than the scenario, so a signal button is
+               offered when the workflow is blocked waiting for it. The approval path needs a
+               bank callback afterwards. -->
           <div class="flex flex-wrap gap-2">
             ${waitingFor === 'approval' && html`
               <button class="btn btn-secondary" onClick=${() => signal('/approval', { approved: true, approver: 'ops-1' }, 'Approval')}>Approve</button>
@@ -430,8 +421,7 @@ function App() {
     const name = id.split('-')[1]
     return SCENARIOS.some(s => s.id === name) ? name : 'successful'
   })
-  // ?payout=<workflowId> attaches to an existing run, so a page refresh mid-demo does
-  // not lose the workflow you were watching.
+  // ?payout=<workflowId> attaches to an existing run, so a page refresh keeps it.
   const [current, setCurrent] = useState(() => {
     const id = new URLSearchParams(location.search).get('payout')
     return id ? { workflowId: id, temporalUrl: `/namespaces/default/workflows/${id}` } : null
@@ -490,8 +480,8 @@ function App() {
       </header>
 
       <main class="flex-1 min-h-0">
-        <!-- Both panes stay mounted for the life of the page: remounting would reload
-             Temporal Web and cold-start Grafana every time you switch. -->
+        <!-- Both panes stay mounted for the life of the page; remounting reloads Temporal Web
+             and cold-starts Grafana. -->
         <div class="h-full ${tab === 'demo' ? 'flex' : 'hidden'}">
           <aside class="flex flex-col gap-3 p-4 overflow-auto"
                  style="width:32%;min-width:360px;border-right:1px solid var(--color-line-subtle)">

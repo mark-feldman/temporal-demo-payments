@@ -102,7 +102,7 @@ class PayoutWorkflowHappyPathTest : PayoutWorkflowTestBase() {
         assertEquals(BusinessStatus.COMPLETED, resultOf(first).status)
 
         // PayoutController sets REJECT_DUPLICATE for exactly this case. The default,
-        // AllowDuplicate, permits a second execution once the first has CLOSED -- which for
+        // AllowDuplicate, permits a second execution once the first has closed -- which for
         // a payout means paying twice. The policy is what makes the workflow id the
         // idempotency boundary, so it is pinned here rather than assumed.
         val duplicate = client.newWorkflowStub(

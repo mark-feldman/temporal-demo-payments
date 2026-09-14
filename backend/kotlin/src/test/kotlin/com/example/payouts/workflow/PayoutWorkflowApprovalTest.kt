@@ -79,10 +79,7 @@ class PayoutWorkflowApprovalTest : PayoutWorkflowTestBase() {
         val result = resultOf(stub)
 
         assertEquals(BusinessStatus.CANCELLED, result.status)
-        // A decline is its own category now. It used to be recorded as VALIDATION, which was
-        // survivable while nothing declined anything; the simulator now declines 20% of the
-        // approvals it sends, so a fifth of every run was landing on the dashboard as a
-        // validation failure.
+        // A decline has its own failure category, distinct from a validation failure.
         assertEquals(FailureCategory.APPROVAL_DECLINED, result.failureCategory)
 
         assertEquals(1, activities.callsTo("releaseReservedFunds").size, "the reservation is unwound")

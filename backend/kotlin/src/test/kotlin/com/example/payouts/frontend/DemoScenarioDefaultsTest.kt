@@ -17,40 +17,31 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * The seam no other layer can see: what each demo scenario actually asks the backend for.
+ * Checks the request each demo scenario sends, which `SCENARIOS` in `app.js` is the only place
+ * to define. Every other suite supplies its own request, so nothing else covers this mapping.
  *
- * Every backend test supplies its own request -- `payoutRequest(amountMinor = 250_000)` in the
- * unit suite, `StartPayoutBody(...)` in the integration suite, a literal in
- * `contract-test.sh`. All of them prove the *behaviours* work. None of them proves that the
- * five buttons in the UI still reach those behaviours, because `SCENARIOS` in `app.js` is the
- * only place that mapping exists.
+ * Each condition asserted here fails silently at runtime rather than raising an error:
  *
- * Everything asserted here fails silently in the demo rather than loudly:
- *
- *  - an amount that drops below the approval threshold skips the human-approval branch and
- *    the Approve / Reject buttons never appear, because they follow the live business status;
- *  - a renamed `StartPayoutBody` property leaves the UI posting the old key, and Spring Boot
- *    does not fail on unknown properties -- the request returns 200 and the scenario quietly
- *    runs on defaults (confirmed against the running stack: posting a misspelled `behavior`
- *    staged `PASS`);
+ *  - an amount below the approval threshold skips the approval branch, and the Approve /
+ *    Reject buttons never appear because they follow the live business status;
+ *  - a renamed `StartPayoutBody` property leaves the UI posting the old key. Spring Boot does
+ *    not fail on unknown properties, so the request returns 200 and the scenario runs on
+ *    defaults;
  *  - a `resolvedStatus` that is not a `BankStatus` name reaches `BankStatus.valueOf` inside an
- *    activity, so it surfaces as a retrying activity rather than a bad request;
+ *    activity, surfacing as a retrying activity rather than a bad request;
  *  - a failure-injection count at or above the retry budget exhausts the policy on some
- *    executions and not others, turning the retry demo into a compensation demo at random.
+ *    executions and not others.
  *
- * So it reads the shipped `app.js` and checks its values against the production constants
- * rather than against a copy of them. Parsing JavaScript with a regex is a deliberately narrow
- * trade: the alternative is duplicating the scenario table in Kotlin, which is the very drift
- * being tested for, or bringing a Node toolchain into a frontend that deliberately has no
- * build step for JS. The parse asserts its own success -- an `app.js` it cannot read fails the
- * test instead of quietly matching nothing.
+ * It reads the shipped `app.js` and checks its values against the production constants rather
+ * than a copy of them. The alternative to parsing JavaScript is duplicating the scenario table
+ * in Kotlin, which is the drift being tested for. The parse asserts its own success, so an
+ * `app.js` it cannot read fails the test rather than matching nothing.
  */
 class DemoScenarioDefaultsTest {
 
     /**
      * One request body the UI can post: a scenario's `defaults`, or those defaults with one of
-     * scenario 5's `pollOutcomes` merged over them. Values stay as source text -- the point is
-     * what gets sent, not what Kotlin would make of it.
+     * scenario 5's `pollOutcomes` merged over them. Values stay as source text.
      */
     private data class PostedConfig(
         val scenarioId: String,
@@ -65,8 +56,8 @@ class DemoScenarioDefaultsTest {
     fun `the approval scenario starts above the threshold, and no other scenario does`() {
         val scenarios = defaultsByScenario()
 
-        // Anchored, so a rename or a sixth scenario is a deliberate edit here rather than a
-        // silently smaller set of assertions.
+        // Anchored, so a rename or an added scenario fails here rather than reducing the
+        // number of assertions.
         assertEquals(
             listOf("successful", "transient", "permanent", "approval", "unknown"),
             scenarios.map { it.scenarioId },
@@ -84,8 +75,8 @@ class DemoScenarioDefaultsTest {
                 "L1 starts at ${ApprovalThresholds.L1_FROM_MINOR}.",
         )
 
-        // The inverse matters just as much: an amount that crept over the threshold would park
-        // the happy path, the retry demo or the polling demo on a human instead.
+        // The inverse also matters: an amount over the threshold would park the happy path,
+        // the retry scenario or the polling scenario on an approver.
         scenarios.filter { it.scenarioId != "approval" }.forEach {
             val amount = requireNotNull(it.long("amountMinor")) { "$it has no amountMinor" }
             assertEquals(
@@ -100,14 +91,12 @@ class DemoScenarioDefaultsTest {
 
     @Test
     fun `every manual scenario still waits for a bank callback`() {
-        // Low-value payouts settle inline through settleWithBank: no wait, no timer, and
-        // therefore no Bank: completed / rejected / unknown buttons in the UI, because those
-        // follow the live business status. The five manual scenarios exist to be driven by
-        // hand, so every one of them has to stay ABOVE the sync threshold -- this is the
-        // constraint that fixed that threshold at \$100, under the \$250 they start at.
+        // Low-value payouts settle inline through settleWithBank: no wait and no timer, so
+        // the Bank buttons never appear, since those follow the live business status. The
+        // manual scenarios are driven by hand, so each one stays above the sync threshold.
         //
-        // Scenario 5 is the sharpest case: a low-value unknown-callback payout would settle
-        // inline and never reach the polling path it exists to demonstrate.
+        // Scenario 5 in particular: a low-value unknown-callback payout would settle inline
+        // rather than reaching the polling path.
         defaultsByScenario().forEach {
             val amount = requireNotNull(it.long("amountMinor")) { "$it has no amountMinor" }
             assertTrue(
@@ -185,8 +174,8 @@ class DemoScenarioDefaultsTest {
 
     /**
      * Scenario entries open `id: 'x', name: 'Y'` on one line. The `pollOutcomes` entries
-     * nested inside scenario 5 also start with `id:`, so the following key is load-bearing:
-     * it is what distinguishes a scenario from an option within one.
+     * nested inside scenario 5 also start with `id:`, so the following key is what
+     * distinguishes a scenario from an option within one.
      */
     private val scenarioHeader = Regex("""id:\s*'([\w-]+)',\s*name:""")
     private val pollOutcome = Regex("""id:\s*'([\w-]+)',\s*label:[^{]*cfg:\s*\{([^}]*)}""")
@@ -199,7 +188,7 @@ class DemoScenarioDefaultsTest {
 
     /**
      * Every body the UI can post: each scenario's defaults, plus one per `pollOutcomes` entry
-     * with its `cfg` merged over those defaults -- which is what `start()` in `app.js` does.
+     * with its `cfg` merged over those defaults, as `start()` in `app.js` does.
      */
     private fun postedConfigs(): List<PostedConfig> {
         val block = scenariosBlock()

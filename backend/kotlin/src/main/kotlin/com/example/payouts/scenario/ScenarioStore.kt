@@ -26,7 +26,7 @@ data class ScenarioConfig(
     val behavior: Behavior = Behavior.PASS,
     /** For FAIL_TRANSIENT: fail this many attempts, then pass. */
     val transientFailures: Int = 2,
-    /** Which activity step the behaviour applies to; blank means the rail submission. */
+    /** Which activity step the behaviour applies to. Defaults to the rail submission. */
     val step: String = "submitToRail",
     /** How many polls return "still pending" before the bank gives a real answer. */
     val pollsBeforeResolution: Int = 3,
@@ -37,15 +37,12 @@ data class ScenarioConfig(
 )
 
 /**
- * Per-payout failure injection, read by ACTIVITIES only. Activity results are recorded in
- * history, so a replaying workflow replays the recorded outcome -- reading mutable config
- * from workflow code would be a non-determinism bug.
+ * Per-payout failure injection, read by activities only. Activity results are recorded in
+ * history, so a replaying workflow replays the recorded outcome; reading mutable config from
+ * workflow code would be a non-determinism bug.
  *
- * Backed by a file for two reasons. The demo includes killing processes, and in-memory
- * config would silently reset on restart, turning a staged failure into a mystery success.
- * And the API and the workers are now separate JVMs -- the API writes the config, the
- * worker's activities read it -- so the file is the channel between them. The worker
- * reloads whenever the file changes underneath it.
+ * Backed by a file, which survives a process restart and is the channel between the API (which
+ * writes it) and the worker JVMs (whose activities read it). A worker reloads on file change.
  */
 @Component
 class ScenarioStore {
@@ -90,9 +87,8 @@ class ScenarioStore {
     }
 
     /**
-     * Throws per the configured behaviour, or returns normally. Attempt counting uses
-     * Temporal's own per-execution counter rather than a server-side map: it resets
-     * correctly and needs no cleanup between demo runs.
+     * Throws per the configured behaviour, or returns normally. [attempt] is Temporal's own
+     * per-execution attempt counter, passed in by the caller.
      */
     fun maybeFail(step: String, payoutId: String, attempt: Int) {
         val config = get(payoutId)

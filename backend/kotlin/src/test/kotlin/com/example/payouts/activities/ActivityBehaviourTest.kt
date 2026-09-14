@@ -34,21 +34,20 @@ import kotlin.test.fail
  * The real activity implementations, exercised through TestActivityEnvironment -- which
  * supplies the ActivityExecutionContext they need in order to read `info.attempt` at all.
  *
- * TWO LIMITS OF THIS HARNESS, both confirmed by reading TestActivityEnvironmentInternal
- * rather than inferred:
+ * Two limits of this harness, both visible in TestActivityEnvironmentInternal:
  *
  *  1. It builds the PollActivityTaskQueueResponse without ever calling `setAttempt`, so
- *     `info.attempt` is the proto default -- ZERO -- not 1 as it would be on a real server.
+ *     `info.attempt` is the proto default, zero, not 1 as it would be on a real server.
  *  2. It contains no retry loop. The RetryOptions on the stub are not simulated; the activity
  *     is invoked exactly once, whatever the policy says.
  *
  * So anything attempt-driven -- the polling loop resolving after N asks, a transient failure
- * clearing on the third try -- cannot be tested here and is covered by the workflow tests,
- * where the real test server drives the retries. What belongs here is the per-invocation
- * logic: the canned references, the rate table, and the SHAPE of the failures thrown.
+ * clearing on the third try -- is covered by the workflow tests, where the test server drives
+ * the retries. What belongs here is the per-invocation logic: the fixed references, the rate
+ * table, and the shape of the failures thrown.
  *
- * These run against the genuine `ActivityMock`, delay and all, so the file stays deliberately
- * short: each call spends 1-2.5 real seconds pretending to be a bank.
+ * These run against the genuine `ActivityMock`, delay and all, so the file stays short: each
+ * call spends 1-2.5 real seconds.
  */
 class ActivityBehaviourTest {
 
@@ -128,10 +127,9 @@ class ActivityBehaviourTest {
         )
         assertTrue(response.accepted)
         assertEquals("BANK-SFTP-000123", response.bankReference)
-        // Reads straight off the ActivityExecutionContext, which this harness leaves at 0.
-        // The assertion still earns its place: a local tally would start at 1 and fail here.
-        // The real counter is asserted end-to-end in PayoutWorkflowCompensationTest, where a
-        // transient failure drives railAttempts to 3.
+        // Reads straight off the ActivityExecutionContext, which this harness leaves at 0. A
+        // local tally would start at 1 and fail here. The real counter is asserted end-to-end
+        // in PayoutWorkflowCompensationTest, where a transient failure drives railAttempts to 3.
         assertEquals(0, response.attempt, "the attempt number comes from Temporal, never a local counter")
     }
 
@@ -167,8 +165,8 @@ class ActivityBehaviourTest {
             bank.pollBankStatus(BankStatusProbeRequest("po-000001", "BANK-HTTP-000001"))
         }
         assertEquals("BankStatusPending", failure.type)
-        // The whole design rests on this: a non-retryable pending would stop after one ask,
-        // and the "poll until the bank answers" loop would not exist.
+        // A non-retryable pending would stop after one ask, so the retry policy could not
+        // function as the polling loop.
         assertTrue(!failure.isNonRetryable, "pending must be retryable")
     }
 

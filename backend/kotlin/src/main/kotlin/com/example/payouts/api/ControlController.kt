@@ -13,7 +13,7 @@ class ControlController(
     @Value("\${spring.temporal.namespace:default}") private val namespace: String,
 ) {
 
-    /** The backend status badge is the only consumer -- and it goes red on kill -9. */
+    /** SDK language and version, task queue, namespace, and whether the server is reachable. */
     @GetMapping("/health")
     fun health(): Map<String, Any> {
         val reachable = runCatching {
@@ -35,7 +35,7 @@ class ControlController(
     fun scenarios() = scenarios.all()
 
     /**
-     * Clears scenario config and counters only. It does NOT terminate workflows or empty
+     * Clears scenario config and counters only. It does not terminate workflows or empty
      * the workflow list -- that needs a fresh --db-filename, which is reset-demo.sh's job.
      */
     @PostMapping("/reset")

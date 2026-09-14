@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
  * The converter is the reason the single-concrete-@Serializable-parameter rule exists, so the
  * rule is asserted here rather than only written down.
  *
- * `toData` receives the RUNTIME object and nothing else -- no declared type, no generic
+ * `toData` receives the runtime object and nothing else -- no declared type, no generic
  * signature. That is why a sealed type, a bare generic or a top-level null loses its type
  * information at the boundary, and why every workflow method, activity method, signal and
  * query in this codebase takes exactly one flat data class.
@@ -140,9 +140,8 @@ class KotlinxJsonPayloadConverterTest {
 
     @Test
     fun `encodeDefaults keeps fields that are still holding their declared default`() {
-        // An API contract should not change shape with the values in it. kotlinx omits
-        // defaults unless told otherwise, which once dropped approvalTier and failureCategory
-        // from responses and left the UI reading undefined.
+        // kotlinx omits fields still holding their declared default unless told otherwise,
+        // which drops approvalTier and failureCategory from the response.
         val minimal = PayoutStatusResponse(
             payoutId = "po-1",
             status = BusinessStatus.RECEIVED,
@@ -161,9 +160,8 @@ class KotlinxJsonPayloadConverterTest {
         val encoded = json(payoutRequestWithEnums())
         assertContains(encoded, "\"rail\":\"SFTP\"")
         assertContains(encoded, "\"region\":\"CN\"")
-        // By NAME, not by ordinal. An ordinal would still round-trip, but it would make the
-        // payload unreadable in Temporal Web -- which is the entire reason this converter
-        // declares json/plain and displaces Jackson rather than adding a new encoding.
+        // By name, not by ordinal. An ordinal round-trips but leaves the payload unreadable
+        // in Temporal Web.
         assertFalse(encoded.contains("\"rail\":1"), "an ordinal would be unreadable in the UI")
         assertTrue(
             encoded.startsWith("{") && encoded.endsWith("}"),
@@ -173,10 +171,10 @@ class KotlinxJsonPayloadConverterTest {
 
     @Test
     fun `serialisation is driven by the runtime class, never the declared type`() {
-        // This is the whole reason for the single-param rule. The value below is DECLARED as
-        // Any; the converter still produces the ProcessPayoutRequest encoding because that is
-        // what it was handed at runtime. The flip side is the constraint: a declared type
-        // that is a sealed parent, a generic, or null carries no usable runtime type here.
+        // The value below is declared as Any; the converter still produces the
+        // ProcessPayoutRequest encoding, because that is what it was handed at runtime. A
+        // declared type that is a sealed parent, a generic, or null carries no usable runtime
+        // type here, which is what the single-param rule exists for.
         val declaredAsAny: Any = payoutRequestWithEnums()
         val viaAny = json(declaredAsAny)
         val viaConcrete = json(payoutRequestWithEnums())

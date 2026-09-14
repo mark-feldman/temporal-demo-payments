@@ -20,10 +20,10 @@ import kotlin.test.fail
 /**
  * Retries and the saga unwind.
  *
- * Note what these tests do NOT do: poll a Query while a retry is in flight. Time skipping is
- * locked while a Query is being polled, and activity retry backoff is a server timer, so the
- * workflow would never make progress. Signals are scheduled on the test server's clock with
- * `registerDelayedCallback` instead, and the assertion blocks on the result.
+ * These tests do not poll a Query while a retry is in flight: time skipping is locked while a
+ * Query is polled, and activity retry backoff is a server timer, so the workflow would not
+ * progress. Signals are scheduled on the test server's clock with `registerDelayedCallback`
+ * and the assertion blocks on the result.
  */
 class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
 
@@ -65,8 +65,7 @@ class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
         val submissions = activities.callsTo("submitToRail")
         assertEquals(3, submissions.size)
         assertEquals(listOf(1, 2, 3), submissions.map { it.attempt })
-        // This is the whole "we do not pay twice" claim: retries reuse one key, they do not
-        // mint a new one per attempt.
+        // Retries reuse one key rather than minting a new one per attempt.
         assertEquals(
             setOf("po-000001-rail-1"),
             submissions.map { it.idempotencyKey }.toSet(),
@@ -99,7 +98,7 @@ class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
         start(stub, payoutRequest(amountMinor = 25_000))
         resultOf(stub)
 
-        // Both compensations are registered BEFORE the activity they undo, so both exist even
+        // Both compensations are registered before the activity they undo, so both exist even
         // though submitToRail never returned. Reverse order puts the bank first.
         assertEquals(
             listOf("reverseRailInstruction", "releaseReservedFunds", "markPayout", "notify"),
@@ -114,8 +113,7 @@ class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
     @Test
     fun `a flaky ledger cannot stop the compensation from completing`() {
         scenarios.put("po-000001", ScenarioConfig(behavior = Behavior.FAIL_PERMANENT, step = "submitToRail"))
-        // The release stub has maximumAttempts deliberately UNSET -- unlimited. Three
-        // failures must not be enough to strand the reservation.
+        // The release stub has maximumAttempts unset, so it is unlimited.
         activities.releaseFailures = 3
         startWorker()
         val stub = newStub("compensation-flaky-ledger")
@@ -139,29 +137,25 @@ class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
         start(stub, payoutRequest(amountMinor = 25_000))
         resultOf(stub)
 
-        // Read out of history rather than off an options object, because the stubs are private
-        // to the workflow and the scheduled policy is the only version that ran. There used to
-        // be a RetryProfiles object asserting these same properties in isolation; it pinned a
-        // policy nothing scheduled, so capping a real stub left it green. Deleted -- this is
-        // the assertion that replaces it.
+        // Read out of history rather than off an options object: the stubs are private to the
+        // workflow, and the scheduled policy is the one that ran.
         val scheduled = client.fetchHistory("compensation-retry-policy").history.eventsList
             .filter { it.eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED }
             .associate { it.activityTaskScheduledEventAttributes.activityType.name to it.activityTaskScheduledEventAttributes }
 
-        // 0 on the getter means UNSET, which is unlimited -- not "zero attempts". A
-        // compensation that gives up leaves money reserved against a failed payout.
+        // 0 on the getter means unset, which is unlimited, not "zero attempts".
         listOf("ReleaseReservedFunds", "ReverseRailInstruction").forEach { activity ->
             val attributes = scheduled[activity] ?: fail("no $activity was scheduled: ${scheduled.keys}")
             assertEquals(
                 0,
                 attributes.retryPolicy.maximumAttempts,
-                "$activity must be scheduled with maximumAttempts UNSET; setting it to 0 " +
-                    "explicitly means 'use the default', which is the trap this guards",
+                "$activity must be scheduled with maximumAttempts unset; setting it to 0 " +
+                    "explicitly means 'use the default'",
             )
         }
 
-        // And the contrast: the business activities ARE capped, at the randomised budget the
-        // scenario amounts in app.js are checked against.
+        // The business activities are capped, at the randomised budget the scenario amounts in
+        // app.js are checked against.
         val rail = scheduled["SubmitToRail"] ?: fail("no SubmitToRail was scheduled: ${scheduled.keys}")
         assertTrue(
             rail.retryPolicy.maximumAttempts in DEMO_MIN_ATTEMPTS..DEMO_MAX_ATTEMPTS,

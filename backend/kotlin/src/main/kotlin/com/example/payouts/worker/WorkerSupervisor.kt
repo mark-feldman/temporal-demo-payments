@@ -15,21 +15,19 @@ data class WorkerInfo(val id: Int, val pid: Long, val port: Int, val alive: Bool
 data class WorkerFleet(
     val running: Int,
     val workers: List<WorkerInfo>,
-    /** The cap, reported so the UI can show it rather than letting the button go dead. */
+    /** The maximum fleet size the supervisor will grow to. */
     val max: Int = WorkerSupervisor.MAX_WORKERS,
 )
 
 /**
  * Runs the Temporal workers as separate JVMs and supervises them.
  *
- * They are separate processes for two reasons. A WorkerFactory keys its workers by task
- * queue and returns the existing one for a repeated call, so a second worker cannot come
- * from the same JVM. And killing a worker has to leave the API alive -- otherwise the
- * thing that restarts it dies with it.
+ * A WorkerFactory keys its workers by task queue and returns the existing one for a repeated
+ * call, so one JVM hosts at most one worker for `payouts`. The API process stays alive when a
+ * worker is killed, so it can start a replacement.
  *
- * Killing one is a real SIGKILL, not a polling pause: the process goes away, in-flight
- * workflow tasks time out, and when a replacement starts it rebuilds state by replaying
- * history. That is the recovery worth showing.
+ * [kill] sends SIGKILL: the process goes away, its in-flight workflow tasks time out, and a
+ * replacement rebuilds state by replaying history.
  */
 @Component
 @ConditionalOnProperty(name = ["demo.role"], havingValue = "primary", matchIfMissing = true)
@@ -50,7 +48,7 @@ class WorkerSupervisor {
         return WorkerFleet(running = list.count { it.alive }, workers = list)
     }
 
-    /** SIGKILL, deliberately -- a graceful shutdown would not demonstrate recovery. */
+    /** SIGKILL the given worker, or the most recently started one. */
     fun kill(id: Int? = null): WorkerFleet {
         val target = id ?: workers.keys.maxOrNull()
         target?.let { workers.remove(it)?.destroyForcibly()?.also { p -> log.info("killed worker {} pid {}", it, p.pid()) } }
@@ -64,18 +62,10 @@ class WorkerSupervisor {
     }
 
     /**
-     * Grows or shrinks the fleet, clamped to [MAX_WORKERS].
+     * Grows or shrinks the fleet to [target], clamped to [MAX_WORKERS].
      *
-     * The growth loop is BOUNDED and stops on a spawn that did not stay alive. It used to be
-     * `while (fleet().running < capped) spawn(nextFreeId())`, which never terminates when a
-     * spawned worker dies immediately: fleet() prunes the dead process, running never reaches
-     * the target, and the request never returns. In the UI that looks exactly like "the Start
-     * button went grey and no worker started" -- the button is disabled on `busy`, and `busy`
-     * is only cleared when the POST settles -- while the API spins spawning short-lived JVMs.
-     *
-     * It is reachable in ordinary use, not just in theory: `make start` runs `gradlew bootJar`
-     * and rewrites build/libs on its way past, and a worker spawned from a half-written jar
-     * exits at once.
+     * The growth loop is bounded at [MAX_WORKERS] attempts and stops on a spawn that did not
+     * stay alive, so it always terminates and the caller always gets a response.
      */
     fun scaleTo(target: Int): WorkerFleet {
         val capped = target.coerceIn(0, MAX_WORKERS)
@@ -115,10 +105,9 @@ class WorkerSupervisor {
             redirectOutput(File("/tmp/payout-demo-worker-$id.log"))
             redirectErrorStream(true)
         }.start()
-        // A worker needs seconds to finish booting, but the PROCESS is alive from the first
-        // instant. Exiting inside this window means it never got off the ground -- a
-        // half-written jar, or a port still held -- and a dead process must never go into the
-        // map, or fleet() would prune it and the caller would spawn another.
+        // A worker takes seconds to finish booting but its process is alive immediately, so
+        // exiting inside this window means it failed to start. Only a live process is put in
+        // the map: fleet() prunes dead entries.
         if (process.waitFor(800, TimeUnit.MILLISECONDS)) {
             log.error(
                 "worker {} exited immediately (status {}); see /tmp/payout-demo-worker-{}.log",
@@ -147,14 +136,9 @@ class WorkerSupervisor {
         /**
          * Worker N runs on [BASE_PORT] + N - 1, so the fleet occupies 8091-8100.
          *
-         * These two numbers are not free to change on their own. Every port in that range
-         * needs a matching scrape target in `config/prometheus/prometheus.yml`, or a worker
-         * that starts fine is simply invisible: the fleet count under-reports and every
-         * per-instance panel quietly draws a subset. `PrometheusTargetsTest` asserts the
-         * range and the config agree.
-         *
-         * Ten is also about as much as a laptop wants -- each worker is a full Spring Boot JVM
-         * alongside the API, the dev server and three containers.
+         * Every port in that range needs a matching scrape target in
+         * `config/prometheus/prometheus.yml`, or the worker is not observable.
+         * `PrometheusTargetsTest` asserts the range and that config agree.
          */
         const val BASE_PORT = 8091
         const val MAX_WORKERS = 10
