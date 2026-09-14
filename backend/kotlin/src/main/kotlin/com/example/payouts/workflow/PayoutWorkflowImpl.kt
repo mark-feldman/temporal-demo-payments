@@ -65,6 +65,8 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     // Deadline flags flipped by timer callbacks. Callbacks and signal handlers both run in
     // event order, so "did the signal beat the deadline" is answered by which of the two ran
     // first -- not by wall-clock, and not by which promise `await` happened to unblock on.
+    /** Set once, at the top of processPayout. See [FINDABLE_STATUSES]. */
+    private var visibilityMilestonesOnly = false
     private var approvalDeadlinePassed = false
     private var bankDeadlinePassed = false
     private val history = mutableListOf<String>()
@@ -202,6 +204,13 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     override fun processPayout(request: ProcessPayoutRequest): ProcessPayoutResponse {
         payoutId = request.payoutId
+        // Resolved before the first command so the decision is stable for the whole
+        // execution, and patched for the same reason as the settlement split: dropping an
+        // upsert changes the command stream, and an execution that already recorded one for
+        // VALIDATING would not emit it on replay.
+        visibilityMilestonesOnly =
+            Workflow.getVersion(VISIBILITY_MILESTONES_CHANGE, Workflow.DEFAULT_VERSION, VISIBILITY_MILESTONES_VERSION) >=
+                VISIBILITY_MILESTONES_VERSION
         upsertSearchAttributes(request)
         val saga = Saga { setContinueWithError(true) }
 
@@ -519,7 +528,15 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         step = detail
         history += "${next.name}: $detail"
         Workflow.setCurrentDetails("**${next.name}** - $detail")
-        Workflow.upsertTypedSearchAttributes(BUSINESS_STATUS.valueSet(next.name))
+        // Every transition is still recorded -- in `history` for the Query, and in
+        // setCurrentDetails for the Temporal timeline. What is rationed is the *visibility*
+        // write, because that is the part that costs a command, a history event and a
+        // visibility task apiece. Under the high-load preset those upserts were the single
+        // biggest per-payout contributor to history-service load: nine of them on a payout
+        // that a visibility query can only usefully be asked about twice.
+        if (!visibilityMilestonesOnly || next in FINDABLE_STATUSES) {
+            Workflow.upsertTypedSearchAttributes(BUSINESS_STATUS.valueSet(next.name))
+        }
         log.info("{} -> {}", next, detail)
     }
 
@@ -561,6 +578,39 @@ class PayoutWorkflowImpl : PayoutWorkflow {
          */
         const val INLINE_SETTLEMENT_CHANGE = "inline-settlement-for-low-value"
         const val INLINE_SETTLEMENT_VERSION = 1
+
+        const val VISIBILITY_MILESTONES_CHANGE = "visibility-milestones-only"
+        const val VISIBILITY_MILESTONES_VERSION = 1
+
+        /**
+         * The statuses a payout can be *found* sitting in, and therefore the only ones worth
+         * writing to the visibility store. Everything else is a transition that lasts
+         * milliseconds: real, recorded in the Query's history list and in the timeline, but
+         * never the answer to "show me the payouts currently in X".
+         *
+         * The set is the union of three requirements, so it cannot be trimmed casually:
+         *  - the five states `awaitStatus` blocks on in both suites and in contract-test.sh
+         *    (AWAITING_APPROVAL, AWAITING_BANK_CONFIRMATION, COMPLETED, FAILED, CANCELLED) --
+         *    BusinessStatusListener is driven by this very upsert, so an unpublished state is
+         *    one the tests can no longer wait for;
+         *  - everything in StatusCollector.TRACKED, which is what the business-outcomes panel
+         *    is built from;
+         *  - the two states a payout genuinely lingers in without being parked on a signal:
+         *    POLLING_BANK_STATUS and COMPENSATING, so both stay filterable in Temporal Web.
+         *
+         * setOf, not hashSetOf: documented iteration order, and it is only ever read.
+         */
+        val FINDABLE_STATUSES = setOf(
+            BusinessStatus.AWAITING_APPROVAL,
+            BusinessStatus.AWAITING_BANK_CONFIRMATION,
+            BusinessStatus.POLLING_BANK_STATUS,
+            BusinessStatus.COMPENSATING,
+            BusinessStatus.COMPENSATED,
+            BusinessStatus.COMPLETED,
+            BusinessStatus.FAILED,
+            BusinessStatus.CANCELLED,
+            BusinessStatus.UNKNOWN_BANK_STATUS,
+        )
 
         /** Server-defined, already registered -- checked with `temporal operator search-attribute list`. */
         val TEMPORAL_CHANGE_VERSION = SearchAttributeKey.forKeywordList("TemporalChangeVersion")
