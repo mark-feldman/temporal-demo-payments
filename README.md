@@ -88,9 +88,11 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
    strand the money.
 4. **Human approval + timeout** — the workflow blocks durably on a signal. Kill the whole
    application and it is still waiting when the process returns.
-5. **Unknown bank status** — the bank accepted an instruction and never confirmed. It
-   **deliberately does not compensate**: releasing the reservation could pay out twice. It is
-   marked, made searchable, and routed to a human.
+5. **Unknown bank status** — the bank accepted an instruction and never confirmed. Rather than
+   escalate, the workflow **polls the bank** until it gets a real answer and continues on its
+   own. The retry policy on the poll activity *is* the polling loop, so every attempt is an
+   event you can point at. Only when polling is exhausted does it compensate, flagged
+   `UNKNOWN_BANK_STATUS`.
 
 The **Metrics** tab runs the load simulator and embeds the Grafana dashboard, so traffic can
 be started and observed without leaving the tab.

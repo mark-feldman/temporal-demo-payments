@@ -95,6 +95,27 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         },
     )
 
+    /**
+     * The retry policy here is the polling loop: `pollBankStatus` throws a retryable failure
+     * while the bank says "pending", so Temporal re-invokes it on a schedule and every poll
+     * is an event in the history. Eight attempts at a 2s flat interval is roughly 16 seconds
+     * of asking before we accept that the bank is not going to answer.
+     */
+    private val bank = Workflow.newActivityStub(
+        BankActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(5))
+            setScheduleToCloseTimeout(Duration.ofMinutes(5))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("Poll bank for payment status")
+            setRetryOptions {
+                setInitialInterval(Duration.ofSeconds(2))
+                setBackoffCoefficient(1.0)
+                setMaximumAttempts(8)
+            }
+        },
+    )
+
     /** Capped at 3 so a dead notifier cannot hold a payout in COMPENSATING forever. */
     private val notifier = Workflow.newActivityStub(
         NotificationActivities::class.java,
@@ -125,12 +146,15 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             )
             advance(BusinessStatus.VALIDATED, "Request validated")
 
-            val reservation = ledger.reserveFunds(ReserveFundsRequest(request.payoutId, request.amount))
+            // Registered BEFORE the call, not after. If reserveFunds moves money in the ledger
+            // and then dies before returning, a compensation registered afterwards would never
+            // exist and the funds would stay reserved. Releasing by payoutId rather than the
+            // reservation id is what makes that possible -- we cannot reference a result we do
+            // not have yet.
             saga.addCompensation {
-                compensationLedger.releaseReservedFunds(
-                    ReleaseFundsRequest(request.payoutId, reservation.reservationId),
-                )
+                compensationLedger.releaseReservedFunds(ReleaseFundsRequest(request.payoutId, ""))
             }
+            ledger.reserveFunds(ReserveFundsRequest(request.payoutId, request.amount))
             advance(BusinessStatus.FUNDS_RESERVED, "Reserved ${request.amount}")
 
             val quote = fx.validateFxQuote(ValidateFxQuoteRequest(request.payoutId, request.amount))
@@ -159,16 +183,20 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             bankReference = submission.bankReference
             advance(BusinessStatus.SUBMITTED_TO_BANK, "Bank accepted instruction ${submission.bankReference}")
 
-            when (awaitBankStatus()) {
+            val reported = when (val first = awaitBankStatus()) {
+                // No answer, or an ambiguous one. Ask the bank directly rather than
+                // escalating to a human: the retry policy on the poll stub does the polling.
+                BankStatus.UNKNOWN, BankStatus.ACCEPTED -> pollBankUntilResolved(request)
+                else -> first
+            }
+            when (reported) {
                 BankStatus.COMPLETED -> complete(request)
                 BankStatus.REJECTED -> {
                     failure = FailureCategory.BANK_REJECTED
                     throw BankRejected()
                 }
-                // The bank accepted an instruction and never confirmed. Releasing the
-                // reservation could pay out twice. Mark, make searchable, route to ops --
-                // do NOT compensate.
-                BankStatus.UNKNOWN, BankStatus.ACCEPTED -> unknownStatus(request)
+                // Polling exhausted its retries without the bank ever answering.
+                BankStatus.UNKNOWN, BankStatus.ACCEPTED -> throw BankStatusUnresolved()
             }
         } catch (e: Exception) {
             handleFailure(request, saga, e)
@@ -226,6 +254,22 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         return if (arrived) bankStatus ?: BankStatus.UNKNOWN else BankStatus.UNKNOWN
     }
 
+    /**
+     * Poll the bank for the real status of an instruction it accepted but never confirmed.
+     * Returns UNKNOWN if the retry policy is exhausted without an answer.
+     */
+    private fun pollBankUntilResolved(request: ProcessPayoutRequest): BankStatus {
+        advance(BusinessStatus.POLLING_BANK_STATUS, "No callback - polling the bank for status")
+        return runCatching {
+            bank.pollBankStatus(
+                BankStatusProbeRequest(request.payoutId, bankReference.orEmpty()),
+            ).status
+        }.getOrElse {
+            log.warn("bank polling exhausted for {}", request.payoutId)
+            BankStatus.UNKNOWN
+        }
+    }
+
     private fun complete(request: ProcessPayoutRequest): ProcessPayoutResponse {
         ledger.markPayout(MarkPayoutRequest(request.payoutId, "COMPLETED"))
         notifier.notify(NotifyRequest(request.payoutId, "customer", "Payout completed"))
@@ -239,20 +283,6 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         )
     }
 
-    private fun unknownStatus(request: ProcessPayoutRequest): ProcessPayoutResponse {
-        failure = FailureCategory.UNKNOWN_BANK_STATUS
-        advance(BusinessStatus.UNKNOWN_BANK_STATUS, "Bank accepted but never confirmed - ops review required")
-        notifier.notify(NotifyRequest(request.payoutId, "ops", "Payment status unknown, needs investigation"))
-        return ProcessPayoutResponse(
-            payoutId = request.payoutId,
-            status = BusinessStatus.UNKNOWN_BANK_STATUS,
-            failureCategory = FailureCategory.UNKNOWN_BANK_STATUS,
-            bankReference = bankReference,
-            railAttempts = railAttempts,
-            message = "unknown bank status - funds deliberately NOT released",
-        )
-    }
-
     private fun handleFailure(
         request: ProcessPayoutRequest,
         saga: Saga,
@@ -260,6 +290,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     ): ProcessPayoutResponse {
         if (failure == FailureCategory.NONE) {
             failure = when {
+                e is BankStatusUnresolved -> FailureCategory.UNKNOWN_BANK_STATUS
                 e is ActivityFailure && e.cause?.message?.contains("Rail") == true -> FailureCategory.RAIL_PERMANENT
                 else -> FailureCategory.VALIDATION
             }
@@ -316,6 +347,16 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
     private class ApprovalDeclined : RuntimeException("approval not granted")
     private class BankRejected : RuntimeException("bank rejected the payment")
+
+    /**
+     * The bank accepted the instruction and never confirmed, and polling could not get an
+     * answer either. Compensating here is a POLICY CHOICE, not a safe default: if the
+     * instruction did settle at the bank, releasing the reservation pays out twice. It is
+     * defensible only because every automated avenue has been exhausted first -- which is
+     * exactly what the polling above is for.
+     */
+    private class BankStatusUnresolved :
+        RuntimeException("bank never confirmed and polling was exhausted")
 
     private companion object {
         val PAYOUT_ID = SearchAttributeKey.forKeyword("payoutId")

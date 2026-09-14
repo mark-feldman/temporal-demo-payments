@@ -123,12 +123,13 @@ const SCENARIOS = [
   },
   {
     id: 'unknown', name: 'Unknown bank status',
-    blurb: 'The bank accepted the instruction and never confirmed. Deliberately routed to a human rather than unwound automatically.',
+    blurb: 'The bank accepted the instruction and never confirmed. The workflow polls the bank until it gets a real answer, rather than escalating.',
     defaults: { scenario: 'unknown', amountMinor: 25000, behavior: 'ACCEPTED_NO_CALLBACK' },
     notes: [
-      'The instruction was accepted but never confirmed: the outcome is genuinely unknown.',
-      'This branch does NOT compensate — releasing the reservation could pay out twice.',
-      'Temporal considers the execution healthy; only businessStatus says otherwise, which is what the custom search attribute is for.',
+      'The instruction was accepted but never confirmed, so the callback never arrives.',
+      'Rather than escalate, the workflow polls the bank — the retry policy on the poll activity is the polling loop, and every attempt is an event.',
+      'Whatever the bank eventually reports drives the outcome: completed, or rejected and compensated.',
+      'Only if polling is exhausted does it compensate on an unresolved status — flagged UNKNOWN_BANK_STATUS, because releasing funds on an instruction that may have settled is a policy call, not a safe default.',
     ],
   },
 ]

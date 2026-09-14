@@ -26,6 +26,12 @@ data class StartPayoutBody(
     val behavior: Behavior = Behavior.PASS,
     val transientFailures: Int = 2,
     val step: String = "submitToRail",
+    /** How many polls report "still pending" before the bank gives a real answer. */
+    val pollsBeforeResolution: Int = 3,
+    /** What the bank eventually reports once polling resolves: COMPLETED or REJECTED. */
+    val resolvedStatus: String = "COMPLETED",
+    /** When true the bank never answers and polling exhausts its retries. */
+    val pollingNeverResolves: Boolean = false,
 )
 
 data class StartPayoutResult(
@@ -52,7 +58,14 @@ class PayoutController(
 
         scenarios.put(
             payoutId,
-            ScenarioConfig(body.behavior, body.transientFailures, body.step),
+            ScenarioConfig(
+                behavior = body.behavior,
+                transientFailures = body.transientFailures,
+                step = body.step,
+                pollsBeforeResolution = body.pollsBeforeResolution,
+                resolvedStatus = body.resolvedStatus,
+                pollingNeverResolves = body.pollingNeverResolves,
+            ),
         )
 
         val stub = client.newWorkflowStub<PayoutWorkflow> {

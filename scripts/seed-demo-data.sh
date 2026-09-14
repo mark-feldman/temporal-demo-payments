@@ -27,11 +27,13 @@ echo "  4 approval timeout         -> Cancelled in ~30s      $W"
 W=$(start '{"scenario":"seed-bankfail","amountMinor":27000,"behavior":"FAIL_PERMANENT"}')
 echo "  5 bank failure             -> Failed + compensated   $W"
 
-W=$(start '{"scenario":"seed-unknown","amountMinor":33000,"behavior":"ACCEPTED_NO_CALLBACK"}')
+# The bank never answers, so polling exhausts its retries -- the one path that still
+# ends unresolved, and a distinct sixth state rather than another COMPLETED.
+W=$(start '{"scenario":"seed-unknown","amountMinor":33000,"behavior":"ACCEPTED_NO_CALLBACK","pollingNeverResolves":true}')
 sleep 4; sig "$W" bank-status '{"status":"UNKNOWN"}'
-echo "  6 payment status unknown   -> Running, needs review  $W"
+echo "  6 unresolved after polling -> Failed, compensated    $W"
 
 echo
-echo "Note: #6 is Running as far as Temporal is concerned. 'Needs investigation' is a"
-echo "businessStatus search attribute, not an execution status -- which is exactly why"
-echo "custom search attributes matter."
+echo "Note: #6 is the only one that stays unresolved. The other no-callback cases resolve"
+echo "themselves by polling the bank; this one exhausts its retries, compensates, and is"
+echo "flagged failureCategory=UNKNOWN_BANK_STATUS so the record says why."

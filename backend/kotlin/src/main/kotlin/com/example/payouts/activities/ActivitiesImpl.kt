@@ -1,6 +1,8 @@
 package com.example.payouts.activities
 
 import com.example.payouts.model.activity.*
+import com.example.payouts.model.domain.BankStatus
+import io.temporal.failure.ApplicationFailure
 import com.example.payouts.scenario.ScenarioStore
 import io.temporal.activity.Activity
 import io.temporal.spring.boot.ActivityImpl
@@ -98,6 +100,31 @@ class RailActivitiesImpl(private val mock: ActivityMock) : RailActivities {
                 bankReference = "BANK-${request.rail}-${request.payoutId.substringAfter("po-")}",
                 attempt = mock.currentAttempt(),
             )
+        }
+}
+
+@Component
+@ActivityImpl(taskQueues = ["payouts"])
+class BankActivitiesImpl(
+    private val mock: ActivityMock,
+    private val scenarios: ScenarioStore,
+) : BankActivities {
+    /**
+     * The bank reports "pending" for the first few attempts, then gives a real answer.
+     * Pending is thrown as a RETRYABLE failure, so the stub's retry policy is what does the
+     * polling -- no sleep loop in workflow code, and every attempt is an event you can point at.
+     */
+    override fun pollBankStatus(request: BankStatusProbeRequest) =
+        mock.run("pollBankStatus", request.payoutId, 400.milliseconds) {
+            val config = scenarios.get(request.payoutId)
+            val attempt = mock.currentAttempt()
+            if (config.pollingNeverResolves || attempt <= config.pollsBeforeResolution) {
+                throw ApplicationFailure.newFailure(
+                    "bank still reports the instruction as pending (poll $attempt)",
+                    "BankStatusPending",
+                )
+            }
+            BankStatusProbeResponse(status = BankStatus.valueOf(config.resolvedStatus))
         }
 }
 

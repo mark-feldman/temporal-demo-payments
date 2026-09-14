@@ -31,10 +31,16 @@ document made executable — it drives the HTTP surface only, never language int
 4. **Idempotency key** — `{payoutId}-rail-1`, stable across every retry of the rail submission.
 5. **Approval thresholds** — USD integer minor units against the FX quote's USD equivalent:
    `< 50_000` auto · `50_000…100_000` L1 · `> 100_000` senior.
-6. **`UNKNOWN_BANK_STATUS` must not compensate.** The bank accepted and never confirmed;
-   releasing the reservation could pay out twice. Mark it, make it searchable, route to a human.
+6. **An absent or ambiguous bank callback must be resolved by polling, not escalation.** Poll
+   the bank for the instruction's real status and continue on whatever it reports. Only when
+   polling is exhausted may the payout compensate, and it must be flagged
+   `failureCategory = UNKNOWN_BANK_STATUS` — releasing funds on an instruction that may have
+   settled is a policy decision, and the record has to say that is what happened.
 7. **Compensation must not give up** — no maximum attempts on the release activity, and it
    runs inside a detached cancellation scope so an external cancel cannot kill it.
+7b. **Compensations are registered before the activity they undo**, never after, so an activity
+   that dies mid-flight still has its compensation on the stack. Release by `payoutId` rather
+   than a reservation id, since the id is not known until the call returns.
 8. **Business metrics from the API layer**, never from workflow code.
 
 ## Failure injection
@@ -44,6 +50,9 @@ named in `step` (default `submitToRail`):
 
 `PASS` · `FAIL_TRANSIENT` · `FAIL_PERMANENT` · `ACCEPTED_NO_CALLBACK` · `REJECTED` ·
 `COMPENSATION_FAILS`
+
+`ACCEPTED_NO_CALLBACK` is further shaped by `pollsBeforeResolution` (how many polls report
+pending), `resolvedStatus` (`COMPLETED` or `REJECTED`) and `pollingNeverResolves`.
 
 Config is read by **activities only** — reading mutable config from workflow code is a
 non-determinism bug — and persists across a backend restart, so the kill-the-app demo does not

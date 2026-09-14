@@ -28,6 +28,12 @@ data class ScenarioConfig(
     val transientFailures: Int = 2,
     /** Which activity step the behaviour applies to; blank means the rail submission. */
     val step: String = "submitToRail",
+    /** How many polls return "still pending" before the bank gives a real answer. */
+    val pollsBeforeResolution: Int = 3,
+    /** What the bank eventually reports once polling resolves. */
+    val resolvedStatus: String = "COMPLETED",
+    /** When true the bank never answers, so polling exhausts its retries. */
+    val pollingNeverResolves: Boolean = false,
 )
 
 /**

@@ -35,6 +35,17 @@ interface RailActivities {
 }
 
 @ActivityInterface
+interface BankActivities {
+    /**
+     * Asks the bank what happened to an instruction it accepted but never confirmed.
+     * Throws a retryable failure while the bank still says "pending", so the retry policy
+     * on the stub does the polling and every attempt lands in the event history.
+     */
+    @ActivityMethod
+    fun pollBankStatus(request: BankStatusProbeRequest): BankStatusProbeResponse
+}
+
+@ActivityInterface
 interface NotificationActivities {
     @ActivityMethod
     fun notify(request: NotifyRequest): NotifyResponse

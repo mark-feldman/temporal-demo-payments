@@ -64,17 +64,41 @@ HIST=$(status "$W" | jqv "['history']")
 [[ "$S" == "FAILED" && "$HIST" == *COMPENSAT* ]] \
   && ok "6 permanent failure triggers compensation" || bad "6 compensation" "$S / $HIST"
 
-# 7 -- unknown bank status is represented AND DOES NOT COMPENSATE
-W=$(start '{"scenario":"ct-unknown","amountMinor":25000,"behavior":"ACCEPTED_NO_CALLBACK"}' | jqv "['workflowId']")
+# 7 -- no callback: the workflow polls the bank and resolves itself, no ops review
+W=$(start '{"scenario":"ct-poll-ok","amountMinor":25000,"behavior":"ACCEPTED_NO_CALLBACK","pollsBeforeResolution":2,"resolvedStatus":"COMPLETED"}' | jqv "['workflowId']")
 await "$W" "AWAITING_BANK_CONFIRMATION" 20 >/dev/null
 signal "$W" bank-status '{"status":"UNKNOWN"}'
-S=$(await "$W" "UNKNOWN_BANK_STATUS" 20)
+S=$(await "$W" "COMPLETED,FAILED" 40)
 HIST=$(status "$W" | jqv "['history']")
-if [[ "$S" == "UNKNOWN_BANK_STATUS" && "$HIST" != *COMPENSAT* ]]; then
-  ok "7 unknown bank status represented and funds NOT released"
+if [[ "$S" == "COMPLETED" && "$HIST" == *POLLING_BANK_STATUS* ]]; then
+  ok "7 unknown callback resolves by polling the bank, without escalating"
 else
-  bad "7 unknown must not compensate" "$S / $HIST"
+  bad "7 polling should resolve" "$S / $HIST"
 fi
+
+# 7b -- polling resolves to a rejection, which compensates
+W=$(start '{"scenario":"ct-poll-reject","amountMinor":25000,"behavior":"ACCEPTED_NO_CALLBACK","pollsBeforeResolution":1,"resolvedStatus":"REJECTED"}' | jqv "['workflowId']")
+await "$W" "AWAITING_BANK_CONFIRMATION" 20 >/dev/null
+signal "$W" bank-status '{"status":"UNKNOWN"}'
+S=$(await "$W" "FAILED,COMPLETED" 40)
+HIST=$(status "$W" | jqv "['history']")
+[[ "$S" == "FAILED" && "$HIST" == *COMPENSAT* ]] \
+  && ok "7b polling resolves to REJECTED and compensates" || bad "7b poll-reject" "$S / $HIST"
+
+# 7c -- polling exhausts without an answer: compensate, and say why in failureCategory
+W=$(start '{"scenario":"ct-poll-never","amountMinor":25000,"behavior":"ACCEPTED_NO_CALLBACK","pollingNeverResolves":true}' | jqv "['workflowId']")
+await "$W" "AWAITING_BANK_CONFIRMATION" 20 >/dev/null
+signal "$W" bank-status '{"status":"UNKNOWN"}'
+S=$(await "$W" "FAILED,COMPLETED" 60)
+FC=$(status "$W" | jqv "['failureCategory']")
+HIST=$(status "$W" | jqv "['history']")
+[[ "$S" == "FAILED" && "$FC" == "UNKNOWN_BANK_STATUS" && "$HIST" == *COMPENSAT* ]] \
+  && ok "7c exhausted polling compensates, flagged UNKNOWN_BANK_STATUS" || bad "7c poll-exhausted" "$S / $FC"
+
+# 7d -- the API contract does not change shape with the values in it
+K=$(status "$W" | python3 -c 'import sys,json;print(",".join(sorted(json.load(sys.stdin))))')
+[[ "$K" == *approvalTier* && "$K" == *failureCategory* && "$K" == *railAttempts* ]] \
+  && ok "7d status response always carries every field" || bad "7d contract shape" "$K"
 
 # 8 -- metrics endpoint
 M=$(curl -s "$BASE/actuator/prometheus")
