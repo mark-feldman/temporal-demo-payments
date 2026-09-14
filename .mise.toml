@@ -1,18 +1,15 @@
-# Pin the JVM for this project.
+# Tool versions for this project. mise is the convenient way to get them, not the only one:
+# the Makefile discovers any JDK 21 (scripts/java-home.sh) and scripts/temporal-bin.sh falls
+# back to the CLI on PATH.
 #
-# The machine default is JDK 26 (`java -version` reports 26.0.1, Homebrew's Maven
-# runs 26.0.2.1). Kotlin 2.4.20 + Spring Boot on a JDK that new is an unnecessary
-# bet, and JDK 21 is also the floor for the Temporal SDK's virtual-thread support.
-#
-# Gradle enforces the same choice independently via `kotlin { jvmToolchain(21) }`,
-# so a bare ./gradlew cannot pick up 26 even outside a mise shell.
+# JDK 21, not the machine default: Kotlin 2.4.20 and Spring Boot are not verified against a
+# JDK this new, and 21 is the floor for the Temporal SDK's virtual-thread support. Gradle
+# fixes the same version independently via `kotlin { jvmToolchain(21) }`.
 
 [tools]
 java = "temurin-21"
 
-# Pin the Temporal CLI too, and for the same reason as the JDK: two are installed on this
-# machine (mise has v1.6.1, Homebrew has 1.8.3) and which one `make start` gets depends
-# purely on PATH ordering. That silently changes the bundled Server and Web UI versions --
-# 2.45.3 has no top-level Workers view, 2.50.1 does -- so the demo would look different
-# depending on which shell it was launched from.
+# The CLI version decides the bundled Server and Web UI versions, so it is pinned exactly.
+# `make start` reads this pin and refuses to run on a different version; `make preflight`
+# reports which one it resolved.
 "github:temporalio/cli" = { version = "v1.8.3", exe = "temporal" }

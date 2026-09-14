@@ -6,6 +6,9 @@ build/
 .DS_Store
 tools/tailwindcss
 
+# IDE settings record this machine's SDK names and module paths.
+.idea/
+
 # Working notes live alongside the code but are not part of it.
 # Root-level Markdown stays local; documentation that ships lives in README.md
 # or next to the code it describes.

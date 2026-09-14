@@ -6,6 +6,10 @@ cd "$(dirname "$0")/.."
 LOG=/tmp/payout-demo-backend.log
 source "$(dirname "$0")/temporal-bin.sh"
 TEMPORAL="$(temporal_bin)" || exit 1
+# Gradle's toolchain is fixed at 21, and the Gradle daemon and the worker JVMs it forks
+# inherit this.
+JAVA_HOME="$(bash scripts/java-home.sh)" || exit 1
+export JAVA_HOME
 
 port_busy() { lsof -iTCP:"$1" -sTCP:LISTEN -n -P >/dev/null 2>&1; }
 
@@ -49,12 +53,10 @@ echo "     up"
 
 echo "3/4  Backend (API) + worker process..."
 # The API spawns worker JVMs from this jar, so it has to exist before boot.
-( cd backend/kotlin && JAVA_HOME="$HOME/.local/share/mise/installs/java/temurin-21.0.11+10.0.LTS" \
-  ./gradlew bootJar -q --console=plain ) || { echo "  jar build failed"; exit 1; }
+( cd backend/kotlin && ./gradlew bootJar -q --console=plain ) || { echo "  jar build failed"; exit 1; }
 # Close stdin and redirect both streams, or the Gradle daemon keeps this script's pipe
 # open and `make start` never returns. (No setsid on macOS; the subshell + nohup is enough.)
-( cd backend/kotlin && JAVA_HOME="$HOME/.local/share/mise/installs/java/temurin-21.0.11+10.0.LTS" \
-  nohup ./gradlew bootRun --console=plain -q >"$LOG" 2>&1 </dev/null & ) >/dev/null 2>&1
+( cd backend/kotlin && nohup ./gradlew bootRun --console=plain -q >"$LOG" 2>&1 </dev/null & ) >/dev/null 2>&1
 for _ in $(seq 1 90); do curl -sf http://localhost:8081/demo-api/health >/dev/null 2>&1 && break; sleep 2; done
 curl -sf http://localhost:8081/demo-api/health >/dev/null 2>&1 \
   || { echo "  Backend failed to start. Last lines of $LOG:"; tail -20 "$LOG"; exit 1; }

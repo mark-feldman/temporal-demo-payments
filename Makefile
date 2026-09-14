@@ -1,8 +1,10 @@
 SHELL := /bin/bash
-JAVA_HOME := $(HOME)/.local/share/mise/installs/java/temurin-21.0.11+10.0.LTS
+# Discovered rather than hardcoded, so any JDK 21 works. Empty when none was found; the
+# helper's own message comes from require-jdk, at the point where a build actually needs it.
+JAVA_HOME := $(shell bash scripts/java-home.sh 2>/dev/null)
 GRADLE := cd backend/kotlin && JAVA_HOME=$(JAVA_HOME) ./gradlew
 
-.PHONY: help preflight start stop reset seed test test-unit test-integration css css-watch build logs workers workers-kill workers-down workers-status
+.PHONY: help preflight require-jdk start stop reset seed test test-unit test-integration css css-watch build logs workers workers-kill workers-down workers-status
 
 help:
 	@echo "make preflight        verify images, tools, fonts and JDK are present"
@@ -37,8 +39,13 @@ preflight:
 	    "")        echo "  MISS temporal CLI" ;; \
 	    *)         echo "  WRONG $$v"; echo "       .mise.toml pins $$pin - run 'mise install' or check PATH order" ;; \
 	  esac
-	@echo "== JDK (must be 21, not the machine default 26) =="
-	@JAVA_HOME=$(JAVA_HOME) java -version 2>&1 | head -1 | sed 's/^/  /'
+	@echo "== JDK =="
+	@if [[ -n "$(JAVA_HOME)" ]]; then \
+	  echo "  OK   $$("$(JAVA_HOME)/bin/java" -version 2>&1 | head -1)"; \
+	  echo "       $(JAVA_HOME)"; \
+	else \
+	  echo "  MISS JDK 21"; bash scripts/java-home.sh >/dev/null || true; \
+	fi
 	@echo "== Fonts =="
 	@ls backend/kotlin/src/main/resources/static/assets/fonts/*.woff2 2>/dev/null | sed 's/^/  OK   /' || echo "  MISS fonts"
 
@@ -69,11 +76,14 @@ workers-status:
 test:
 	@bash scripts/contract-test.sh
 
+require-jdk:
+	@bash scripts/java-home.sh >/dev/null
+
 # Both JUnit suites run entirely in-JVM: no dev server, no Docker, no worker JVM.
-test-unit:
+test-unit: require-jdk
 	@$(GRADLE) test
 
-test-integration:
+test-integration: require-jdk
 	@$(GRADLE) integrationTest
 
 css:
@@ -82,7 +92,7 @@ css:
 css-watch:
 	@./tools/tailwindcss -i backend/kotlin/src/css/app.css -o backend/kotlin/src/main/resources/static/assets/app.css --watch
 
-build:
+build: require-jdk
 	@$(GRADLE) build
 
 logs:
