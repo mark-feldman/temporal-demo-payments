@@ -139,10 +139,11 @@ class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
         start(stub, payoutRequest(amountMinor = 25_000))
         resultOf(stub)
 
-        // Asserted against history rather than against the options object, because the options
-        // are built inside the workflow and the scheduled policy is the only version that
-        // matters. RetryProfiles.COMPENSATION pins these same properties on an object nothing
-        // schedules, so it cannot see a cap added to the stubs in PayoutWorkflowImpl.
+        // Read out of history rather than off an options object, because the stubs are private
+        // to the workflow and the scheduled policy is the only version that ran. There used to
+        // be a RetryProfiles object asserting these same properties in isolation; it pinned a
+        // policy nothing scheduled, so capping a real stub left it green. Deleted -- this is
+        // the assertion that replaces it.
         val scheduled = client.fetchHistory("compensation-retry-policy").history.eventsList
             .filter { it.eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED }
             .associate { it.activityTaskScheduledEventAttributes.activityType.name to it.activityTaskScheduledEventAttributes }
