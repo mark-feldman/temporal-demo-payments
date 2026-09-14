@@ -98,7 +98,7 @@ class PayoutController(
             payoutId = payoutId,
             workflowId = workflowId,
             runId = execution.runId,
-            temporalUrl = "/namespaces/default/workflows/$workflowId/${execution.runId}/history",
+            temporalUrl = "/namespaces/default/workflows/$workflowId/${execution.runId}/timeline",
         )
     }
 

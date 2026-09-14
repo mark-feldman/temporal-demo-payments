@@ -108,6 +108,13 @@ function WorkerControl() {
 
 // Workers are listed on the task-queue page. "Deployments" is Worker Deployments
 // (versioning), which is a different view.
+// Timeline is a route under the run, so it needs a run id. Without one the UI resolves the
+// latest run itself, but lands on whichever tab it defaults to.
+const workflowUrl = (workflowId, runId) =>
+  runId
+    ? `/namespaces/default/workflows/${workflowId}/${runId}/timeline`
+    : `/namespaces/default/workflows/${workflowId}`
+
 const VIEWS = [
   { label: 'Workflows', path: '/namespaces/default/workflows',
     title: 'All workflow executions' },
@@ -422,10 +429,11 @@ function App() {
     const name = id.split('-')[1]
     return SCENARIOS.some(s => s.id === name) ? name : 'successful'
   })
-  // ?payout=<workflowId> attaches to an existing run, so a page refresh keeps it.
+  // ?payout=<workflowId>&run=<runId> attaches to an existing run, so a page refresh keeps it.
   const [current, setCurrent] = useState(() => {
-    const id = new URLSearchParams(location.search).get('payout')
-    return id ? { workflowId: id, temporalUrl: `/namespaces/default/workflows/${id}` } : null
+    const q = new URLSearchParams(location.search)
+    const id = q.get('payout')
+    return id ? { workflowId: id, temporalUrl: workflowUrl(id, q.get('run')) } : null
   })
   const [status, setStatus] = useState(null)
   const [statusError, setStatusError] = useState(false)
@@ -453,7 +461,8 @@ function App() {
 
   const onStarted = useCallback(r => {
     setCurrent(r); setStatus(null)
-    history.replaceState(null, '', `?payout=${encodeURIComponent(r.workflowId)}${location.hash}`)
+    const query = `?payout=${encodeURIComponent(r.workflowId)}&run=${encodeURIComponent(r.runId)}`
+    history.replaceState(null, '', `${query}${location.hash}`)
     if (iframeRef.current) iframeRef.current.src = r.temporalUrl
   }, [])
 
