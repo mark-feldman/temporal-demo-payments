@@ -26,6 +26,21 @@ there until someone redeploys compatible code.
 
 ## What is committed here, and why
 
+`approval-with-timers.json` — a real 64-event approval run of a **$2,500** payout, exported
+before the deadline timers carried summaries. It is the "timers and signals" shape the list
+above asks for, and it covers both timer outcomes in one history: the approval timer is
+**cancelled** because the `approve` signal arrived first, and the bank timer **fires** because
+no callback came, so `PollBankStatus` takes over. There is also a `getVersion` marker and five
+visibility upserts in it.
+
+Unlike the file below, it does not fail against the unpatched code, because there is no patch
+it belongs to: the summaries on those timers are user metadata, which rides alongside the
+command rather than forming part of it. It was recorded by the code that had no summaries and
+replays clean against the code that has them, which is what says the change was safe for the
+executions that were in flight when it shipped. It is kept as the forward guard for this
+shape: a change that reorders the two waits, moves a timer, or folds one back into
+`await(timeout, ...)` would break replay here and nowhere else in the suite.
+
 `pre-inline-settlement-low-value.json` — a real 53-event run of a **$10–$99** payout, exported
 from the running stack *before* the bank confirmation was split by amount. It took the old
 path: submit to the rail, park on `AWAITING_BANK_CONFIRMATION`, consume the callback, complete.

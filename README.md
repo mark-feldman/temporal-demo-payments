@@ -20,7 +20,7 @@ make seed          # six workflows in six distinct states
 Then open **http://localhost:8080**.
 
 ```
-make stop            stop everything
+make stop            stop everything, waiting for the ports to be released
 make reset           stop and clear ALL state, including workflow history
 make test            contract tests, over HTTP against a running stack
 make test-unit       JUnit unit suite (no stack needed)
@@ -109,7 +109,10 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
 The **Metrics** tab runs the load simulator and embeds the Grafana dashboard, so traffic can
 be started and observed without leaving the tab.
 
-A **Temporal UI** row above the scenario controls re-points the embedded pane at Workflows,
+Starting a payout points the embedded pane at that run's **Timeline** tab
+(`/namespaces/{ns}/workflows/{id}/{runId}/timeline`), which needs the run id — the start
+response carries one, and the `?payout=` deep link carries it too so a refresh lands on the
+same tab. A **Temporal UI** row above the scenario controls re-points the pane at Workflows,
 Workers or Schedules.
 
 Its **Workers** button goes to the task-queue page (`/namespaces/{ns}/task-queues/{queue}`)
@@ -166,9 +169,12 @@ the patch into a query:
 temporal workflow list --query 'TemporalChangeVersion IS NULL AND ExecutionStatus="Running"'
 ```
 
-`src/test/resources/histories/` holds a real pre-change execution that fails to replay without
-the gate, and `PayoutWorkflowReplayTest` replays whatever is dropped in there against the
-current workflow code. That is the guard for a change that would break runs already in flight.
+`src/test/resources/histories/` holds real executions recorded before a change, and
+`PayoutWorkflowReplayTest` replays every one of them against the current workflow code — the
+guard for a change that would break runs already in flight. Two are committed:
+`pre-inline-settlement-low-value.json`, which fails without this gate, and
+`approval-with-timers.json`, an approval run covering both timer outcomes, one cancelled by the
+signal and one fired. The directory's own README says which shapes are worth keeping.
 
 **`spring.temporal.connection.target` must not be `local`.** The starter special-cases that
 value and calls `WorkflowServiceStubs.newLocalServiceStubs()`, which silently discards the
