@@ -8,7 +8,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 9,
+  "version": 10,
   "refresh": "5s",
   "time": {
     "from": "now-15m",
@@ -69,7 +69,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -125,7 +126,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -192,7 +194,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -248,7 +251,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -308,7 +312,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -375,7 +380,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -507,7 +513,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -563,7 +570,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -619,7 +627,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -688,7 +697,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -744,7 +754,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -813,7 +824,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -869,7 +881,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -925,7 +938,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -992,7 +1006,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -1126,7 +1141,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -1193,7 +1209,8 @@
             "fillOpacity": 8,
             "showPoints": "never",
             "spanNulls": true
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
