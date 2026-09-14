@@ -7,13 +7,36 @@ LOG=/tmp/payout-demo-backend.log
 
 port_busy() { lsof -iTCP:"$1" -sTCP:LISTEN -n -P >/dev/null 2>&1; }
 
-for p in 8080 8081 9090 3000; do
+# 8000 and 7233 are Temporal's, and they are the ones that actually bite: the metrics port
+# is still in TIME_WAIT for a few seconds after `make stop`, and the dev server exits with
+# "can't set metrics port 8000" rather than anything about restarting too quickly. They were
+# missing from this list, so the failure looked like a broken install.
+for p in 8080 8081 9090 3000 8000 7233; do
   if port_busy "$p"; then
     echo "Port $p is already in use. Run 'make stop' first, or free it:"
     lsof -iTCP:"$p" -sTCP:LISTEN -n -P | tail -n +2 | sed 's/^/  /'
     exit 1
   fi
 done
+
+# ASSERT the pinned CLI, do not just hope for it. `make preflight` checks this, but nothing
+# forces anyone to run preflight -- and the CLI is what decides the bundled Server and Web UI
+# versions, so the wrong one on PATH silently changes the demo underneath you. It has happened
+# twice: two CLIs installed, PATH order picked v1.6.1, and the UI came up as 2.45.3 instead of
+# the pinned 2.50.1.
+# Read from .mise.toml rather than restated here. The pin is the source of truth; a second
+# copy of the number is just a third thing to forget to update.
+EXPECTED_CLI=$(sed -n 's|.*temporalio/cli.*version = "v\{0,1\}\([0-9.]*\)".*|\1|p' .mise.toml)
+[[ -n "$EXPECTED_CLI" ]] || { echo "Could not read the temporal CLI pin from .mise.toml"; exit 1; }
+ACTUAL_CLI=$(temporal --version 2>/dev/null)
+case "$ACTUAL_CLI" in
+  *"$EXPECTED_CLI"*) ;;
+  "") echo "No temporal CLI on PATH. Run 'mise install'."; exit 1 ;;
+  *)  echo "Wrong temporal CLI: $ACTUAL_CLI"
+      echo "  .mise.toml pins $EXPECTED_CLI, and the CLI decides the bundled Server and Web UI."
+      echo "  Fix PATH order or run 'mise install', then 'make preflight' to confirm."
+      exit 1 ;;
+esac
 
 echo "1/4  Temporal dev server..."
 if ! temporal operator cluster health >/dev/null 2>&1; then
