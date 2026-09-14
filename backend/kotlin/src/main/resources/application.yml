@@ -1,0 +1,57 @@
+spring:
+  application:
+    name: payout-demo
+  main:
+    # TemporalConfig declares its own `temporalMetricsScope` to control the Tally report
+    # interval; without this the starter's MetricsScopeAutoConfiguration bean of the same
+    # name collides and the context fails to start.
+    allow-bean-definition-overriding: true
+  temporal:
+    connection:
+      # NOT `local`. The starter's ServiceStubsTemplate special-cases that value and calls
+      # WorkflowServiceStubs.newLocalServiceStubs(), which silently discards the metrics
+      # scope AND the stub customizers. Spelling the address out takes the default branch,
+      # which applies both -- this is the difference between having SDK metrics and not.
+      target: 127.0.0.1:7233
+    namespace: default
+    start-workers: true
+    workers-auto-discovery:
+      # `packages` is deprecated since SDK 1.35.0 and throws if mixed with these.
+      workflow-packages:
+        - com.example.payouts.workflow
+      register-activity-beans: true
+    workers:
+      - task-queue: payouts
+        name: payout-worker
+        # Set explicitly, not because the defaults are wrong, but because the high-load
+        # preset is ~175 activity executions/sec against a single worker on a developer
+        # machine -- the limits should be visible rather than implied.
+        capacity:
+          max-concurrent-workflow-task-executors: 100
+          max-concurrent-activity-executors: 100
+          max-concurrent-workflow-task-pollers: 5
+          max-concurrent-activity-task-pollers: 5
+        rate-limits:
+          max-worker-activities-per-second: 300
+
+server:
+  port: 8081
+  # Caddy's catch-all belongs to Temporal, so Spring must stay inside the demo namespace.
+  error:
+    path: /demo-api/error
+
+management:
+  endpoints:
+    web:
+      base-path: /demo-api/actuator
+      exposure:
+        include: health,prometheus
+  endpoint:
+    prometheus:
+      access: unrestricted
+
+logging:
+  level:
+    root: INFO
+    com.example.payouts: INFO
+    io.temporal: WARN

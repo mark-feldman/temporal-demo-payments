@@ -1,0 +1,28 @@
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	# The demo claims a SMALL, EXPLICIT namespace. Everything else belongs to Temporal Web,
+	# so its absolute /_app/... and /api/... paths work unrewritten. Mounting Temporal under
+	# a stripped prefix instead breaks the SvelteKit SPA.
+	handle /demo-api/* {
+		reverse_proxy host.docker.internal:8081
+	}
+
+	handle /assets/* {
+		reverse_proxy host.docker.internal:8081
+	}
+
+	handle / {
+		reverse_proxy host.docker.internal:8081
+	}
+
+	handle {
+		reverse_proxy host.docker.internal:8233 {
+			# Same-origin already satisfies SAMEORIGIN; this makes the intent explicit.
+			header_down -X-Frame-Options
+		}
+	}
+}

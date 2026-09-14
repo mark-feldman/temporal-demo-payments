@@ -1,0 +1,40 @@
+# Only three things run in Docker. The Temporal server and the Spring Boot app run on the
+# host, which is what makes the kill-the-app moment a plain `kill -9` and keeps Gradle's
+# edit-run loop fast.
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: payout-demo-caddy
+    ports: ["8080:8080"]
+    volumes:
+      - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: payout-demo-prometheus
+    ports: ["9090:9090"]
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    container_name: payout-demo-grafana
+    ports: ["3000:3000"]
+    environment:
+      # Grafana blocks embedding by default: X-Frame-Options: deny plus a 302 to login.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped

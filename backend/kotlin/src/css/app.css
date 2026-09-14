@@ -1,0 +1,133 @@
+@import "tailwindcss";
+@source "../main/resources/static/index.html";
+@source "../main/resources/static/assets/app.js";
+
+/* ---------------------------------------------------------------------------
+   Tokens read out of temporal.io's shipped stylesheet (app.CwZIutBK.css) and
+   cross-checked against Temporal Web UI 2.45.3. Dark-first, like the marketing
+   site; the product UI is the same system with light as its default.
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-surface-background: #141414;
+  --color-surface-panel:      #1b1b1f;
+  --color-surface-raised:     #243349;
+  --color-surface-subtle:     #374761;
+  --color-surface-brand:      #444CE7;
+
+  --color-ink-primary:   #F8FAFC;
+  --color-ink-secondary: #92A4C3;
+  --color-ink-muted:     #647a9b;
+
+  --color-line-subtle:    #374761;
+  --color-line-secondary: #465A78;
+
+  --color-state-success: #00CC6A;
+  --color-state-warning: #FEB412;
+  --color-state-danger:  #FF643C;
+  --color-state-info:    #6173F3;
+
+  --color-interactive:        #3F43DB;
+  --color-interactive-hover:  #3538CF;
+
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "Noto Sans Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-md: 0.375rem;
+}
+
+@font-face { font-family: Outfit; src: url(/assets/fonts/outfit.woff2) format("woff2-variations");
+             font-weight: 100 900; font-display: swap; }
+@font-face { font-family: Inter; src: url(/assets/fonts/inter.woff2) format("woff2-variations");
+             font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Noto Sans Mono"; src: url(/assets/fonts/noto-sans-mono.woff2) format("woff2-variations");
+             font-weight: 100 900; font-display: swap; }
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    background: var(--color-surface-background);
+    color: var(--color-ink-primary);
+    font-family: var(--font-body);
+    /* 16px, not Temporal's 14px: the same type system, one step up for legibility. */
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 300; letter-spacing: -0.02em; }
+}
+
+@layer components {
+  /* Mono uppercase eyebrow -- the most transferable idea from temporal.io. */
+  .eyebrow {
+    font-family: var(--font-mono); font-weight: 500; font-size: 0.6875rem;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-ink-muted);
+  }
+  .mono { font-family: var(--font-mono); }
+
+  .panel {
+    background: var(--color-surface-panel);
+    border: 1px solid var(--color-line-subtle);
+    border-radius: var(--radius-md);
+  }
+
+  /* Buttons are monospace medium with a 2px border and a ring on hover --
+     the single most distinctive choice on temporal.io. */
+  .btn {
+    font-family: var(--font-mono); font-weight: 500; font-size: 0.875rem;
+    border: 2px solid transparent; border-radius: var(--radius-md);
+    padding: 0.625rem 1.25rem; cursor: pointer; display: inline-flex;
+    align-items: center; gap: 0.5rem; justify-content: center;
+    transition: color .15s, background-color .15s, border-color .15s, box-shadow .15s;
+  }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  /* Exactly one ultraviolet gradient on the screen: the primary action. */
+  .btn-primary { color: #F8FAFC; background-image: linear-gradient(45deg, #B664FF 0%, #444CE7 100%); }
+  .btn-primary:hover:not(:disabled) { box-shadow: 0 0 0 4px rgb(68 76 231 / .5); }
+  .btn-primary:active:not(:disabled) { box-shadow: 0 0 0 0; color: #CACBF9; }
+
+  .btn-secondary { color: #F8FAFC; background: var(--color-surface-panel); border-color: var(--color-line-secondary); }
+  .btn-secondary:hover:not(:disabled) { border-color: #7F86F1; }
+
+  .btn-danger { color: #F8FAFC; background: #C71D00; }
+  .btn-danger:hover:not(:disabled) { box-shadow: 0 0 0 4px rgb(255 100 60 / .35); }
+
+  .btn-ghost { background: transparent; color: var(--color-ink-secondary); }
+  .btn-ghost:hover:not(:disabled) { color: var(--color-ink-primary); }
+
+  .input {
+    background: var(--color-surface-background); color: var(--color-ink-primary);
+    border: 1px solid var(--color-line-secondary); border-radius: var(--radius-md);
+    padding: 0.5rem 0.625rem; font-family: var(--font-mono); font-size: 0.8125rem; width: 100%;
+  }
+  .input:focus { outline: none; border-color: var(--color-surface-brand); }
+
+  /* Status never encodes by colour alone: colour + label + border style. */
+  .badge {
+    display: inline-flex; align-items: center; gap: .45rem;
+    font-family: var(--font-mono); font-weight: 500; font-size: .8125rem;
+    padding: .35rem .7rem; border-radius: var(--radius-md); border: 1px solid;
+  }
+  .badge-idle    { color: var(--color-ink-secondary); border-color: var(--color-line-secondary); }
+  .badge-running { color: var(--color-state-info);    border-color: var(--color-state-info);
+                   background: rgb(97 115 243 / .10); }
+  .badge-success { color: var(--color-state-success); border-color: var(--color-state-success);
+                   background: rgb(0 204 106 / .10); }
+  .badge-danger  { color: var(--color-state-danger);  border-color: var(--color-state-danger);
+                   background: rgb(255 100 60 / .10); }
+  .badge-warning { color: var(--color-state-warning); border-color: var(--color-state-warning);
+                   background: rgb(254 180 18 / .10); }
+  /* UNKNOWN_BANK_STATUS gets a treatment nothing else uses: an incomplete edge,
+     for a state that is genuinely open. Not green, not red. */
+  .badge-unknown { color: var(--color-state-warning); border-color: var(--color-state-warning);
+                   border-style: dashed; background: rgb(254 180 18 / .07); }
+
+  .dot { width: .5rem; height: .5rem; border-radius: 9999px; background: currentColor; }
+  .dot-pulse { animation: pulse 2s cubic-bezier(.4,0,.6,1) infinite; }
+
+  /* Scenario notes: quiet and visually distinct, so they read as commentary. */
+  .notes {
+    background: var(--color-surface-raised);
+    border-left: 3px solid var(--color-surface-brand);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  }
+}

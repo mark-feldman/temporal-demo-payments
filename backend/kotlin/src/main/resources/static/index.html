@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payout Orchestration — Temporal demo</title>
+<link rel="stylesheet" href="/assets/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>💸</text></svg>">
+</head>
+<body>
+<div id="root"></div>
+<!-- preact/hooks imports the bare specifier "preact"; browsers need an import map
+     to resolve it without a bundler. This is the whole cost of having no build step. -->
+<script type="importmap">
+{"imports":{
+  "preact": "/assets/vendor/preact.module.js",
+  "preact/hooks": "/assets/vendor/hooks.module.js"
+}}
+</script>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>

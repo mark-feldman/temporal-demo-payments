@@ -1,0 +1,24 @@
+global:
+  # 10s exactly: the Metrics tab's "watch the strip and the graph converge" moment
+  # depends on this value.
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  # Temporal server metrics -- `temporal server start-dev --metrics-port 8000`.
+  # The flag defaults to a RANDOM free port, so it must be set explicitly.
+  - job_name: temporal-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:8000']
+        labels: { group: server-metrics }
+
+  # Worker SDK metrics AND business metrics, both on the Spring actuator endpoint.
+  # The Temporal Spring Boot starter auto-wires its Tally scope to the Micrometer
+  # registry whenever spring-boot-starter-actuator is present, so temporal_* SDK
+  # metrics land here alongside the payout_* counters -- one scrape, not two.
+  - job_name: payout-demo-worker
+    metrics_path: /demo-api/actuator/prometheus
+    static_configs:
+      - targets: ['host.docker.internal:8081']
+        labels: { group: sdk-and-business-metrics }

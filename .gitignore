@@ -1,0 +1,13 @@
+build/
+.gradle/
+.temporal-demo.db*
+.scenario-store.json
+*.log
+.DS_Store
+tools/tailwindcss
+
+# Working notes live alongside the code but are not part of it.
+# Root-level Markdown stays local; documentation that ships lives in README.md
+# or next to the code it describes.
+/*.md
+!/README.md

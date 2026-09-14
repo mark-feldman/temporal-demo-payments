@@ -1,0 +1,11 @@
+# Pin the JVM for this project.
+#
+# The machine default is JDK 26 (`java -version` reports 26.0.1, Homebrew's Maven
+# runs 26.0.2.1). Kotlin 2.4.20 + Spring Boot on a JDK that new is an unnecessary
+# bet, and JDK 21 is also the floor for the Temporal SDK's virtual-thread support.
+#
+# Gradle enforces the same choice independently via `kotlin { jvmToolchain(21) }`,
+# so a bare ./gradlew cannot pick up 26 even outside a mise shell.
+
+[tools]
+java = "temurin-21"
