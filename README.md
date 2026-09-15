@@ -1,8 +1,8 @@
 # Payout orchestration — a Temporal demo
 
 A local, runnable payout orchestration demo built on Temporal. One payout workflow, five
-scenarios, a load simulator, and live worker + server metrics — all behind a single
-URL, so the workflow controls and the Temporal Web UI sit side by side in one window.
+scenarios, a load simulator, and live worker + server metrics, all behind a single URL, so the
+workflow controls and the Temporal UI sit side by side in one window.
 
 **Backend:** Kotlin · Spring Boot · Temporal Java SDK 1.38.0
 **Frontend:** Preact + htm, no build step for the JS · Tailwind v4 for the CSS
@@ -50,8 +50,8 @@ $ make workers N=3
 Three workers means three JVMs, not three workers in one. A `WorkerFactory` keys its workers
 by task queue and returns the existing one for a repeated call, so extra instances cannot come
 from a single process. The API supervises them and launches the same jar again on a different
-`--server.port` — worker N on `8090 + N`, since the API itself holds `:8081` — and each process
-gets its own identity (`pid@host`) automatically.
+`--server.port`: worker N on `8090 + N`, since the API itself holds `:8081`. Each process gets
+its own identity (`pid@host`) automatically.
 
 They appear as separate rows under **Workers** on the task-queue page. `make workers-kill`
 SIGKILLs the most recent one, `make workers-down` stops them all, and the API survives either,
@@ -60,17 +60,17 @@ a worker stops, so the count settles rather than dropping instantly.
 
 Prometheus scrapes `:8091`–`:8100` alongside the API on `:8081`, so each worker shows up on the
 dashboard individually: **Live worker instances** tracks the fleet and **Worker task slots
-available** gains a series per instance. Targets above the current fleet size read **DOWN** —
-that means "not running", not "broken".
+available** gains a series per instance. Targets above the current fleet size read **DOWN**,
+which means "not running", not "broken".
 
-One query detail worth knowing if you add panels: the Temporal server exposes
+One query detail matters if you add panels: the Temporal server exposes
 `temporal_worker_task_slots_available` for its own internal system workers, so SDK panels
 filter on `job="payout-demo-worker"`. It is the only metric name that overlaps.
 
 | | |
 |---|---|
 | Demo | http://localhost:8080 |
-| Temporal Web | http://localhost:8233 (also embedded in the right pane) |
+| Temporal UI | http://localhost:8233 (also embedded in the right pane) |
 | Grafana | http://localhost:3000 |
 | Prometheus | http://localhost:9090 |
 
@@ -99,12 +99,11 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
 5. **Unknown bank status** — the bank accepted an instruction and never confirmed. Rather than
    escalate, the workflow **polls the bank** until it gets a real answer and continues on its
    own. The retry policy on the poll activity *is* the polling loop. Only when polling is
-   exhausted does it compensate — reversing the instruction at the bank, releasing the
-   reservation and notifying the customer — flagged `UNKNOWN_BANK_STATUS`.
+   exhausted does it compensate: reverse the instruction at the bank, release the reservation,
+   notify the customer, and flag the outcome `UNKNOWN_BANK_STATUS`.
 
-   Note that activity retries do **not** write per-attempt history events. The polls are
-   visible live through the pending-activity record, and afterwards as the final attempt
-   number plus the gap between `ActivityTaskScheduled` and `ActivityTaskStarted`.
+   The polls show up live on the pending-activity record. Afterwards only the final attempt
+   count remains, since retries write no per-attempt history event.
 
 The **Metrics** tab runs the load simulator and embeds the Grafana dashboard, so traffic can
 be started and observed without leaving the tab.
@@ -112,19 +111,147 @@ be started and observed without leaving the tab.
 Starting a payout points the embedded pane at that run's **Timeline** tab
 (`/namespaces/{ns}/workflows/{id}/{runId}/timeline`), which needs the run id — the start
 response carries one, and the `?payout=` deep link carries it too so a refresh lands on the
-same tab. What that pane shows is annotated rather than anonymous: the execution carries a
-static summary and details, each activity a summary, and both deadline timers one too, so an
-approval wait reads "Waiting for SENIOR approval" instead of a bare timer. A **Temporal UI** row
-above the scenario controls re-points the pane at Workflows, Workers or Schedules.
+same tab. The pane is annotated: the execution carries a static summary and details, each
+activity a summary, and both deadline timers one too, so an approval wait reads "Waiting for
+SENIOR approval" instead of a bare timer. A **Temporal UI** row above the scenario controls
+re-points the pane at Workflows, Workers or Schedules.
 
 Its **Workers** button goes to the task-queue page (`/namespaces/{ns}/task-queues/{queue}`)
-rather than Temporal's own Workers view, deliberately: the task-queue page is scoped to
-`payouts`, so the count is just your workers. Temporal's top-level Workers view also lists the
+rather than Temporal's own Workers view. The task-queue page is scoped to `payouts`, so the
+count is just your workers. Temporal's top-level Workers view also lists the
 server's internal `temporal-sys-per-ns-tq` worker, so killing one of yours takes the count from
-3 to 2 rather than 2 to 1 — avoidable confusion during the worker-recovery demo.
+3 to 2 rather than 2 to 1, which is avoidable confusion during the worker-recovery demo.
 
-The top-level **Workers** view exists from Web UI 2.50. **Deployments** is a different thing
-again — Worker Deployments, i.e. versioning.
+The top-level **Workers** view exists from Temporal UI 2.50. **Deployments** is a different
+thing again: Worker Deployments, i.e. versioning.
+
+---
+
+## The workflow, step by step
+
+`PayoutWorkflow` is the only workflow in the repo, and every scenario above is a path through
+it.
+
+### The happy path
+
+```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 25, "rankSpacing": 34}} }%%
+flowchart TD
+    START(["processPayout(request)"]):::term
+    V["validatePayout"]:::act
+    R["reserveFunds"]:::act
+    F["validateFxQuote"]:::act
+    APP["conditional AWAITING_APPROVAL, then APPROVED<br/>when the USD equivalent is $500 or more"]:::opt
+    S["submitToRail"]:::act
+    B["the bank confirms<br/>inline via settleWithBank under $100,<br/>otherwise the bankStatusUpdate callback"]:::wait
+    M["markPayout COMPLETED"]:::act
+    N["notify customer"]:::act
+    DONE(["COMPLETED"]):::ok
+
+    START -->|"RECEIVED · VALIDATING"| V
+    V -->|"VALIDATED"| R
+    R -->|"FUNDS_RESERVED"| F
+    F -->|"FX_QUOTE_VALIDATED"| APP
+    APP -->|"SUBMITTING_TO_BANK"| S
+    S -->|"SUBMITTED_TO_BANK"| B
+    B -->|"COMPLETED"| M
+    M --> N
+    N --> DONE
+
+    classDef act fill:#ecfdf5,stroke:#059669,color:#111827
+    classDef wait fill:#fff7ed,stroke:#d97706,color:#111827
+    classDef opt fill:#fff7ed,stroke:#d97706,stroke-dasharray:5 3,color:#111827
+    classDef ok fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef term fill:#f1f5f9,stroke:#334155,color:#111827
+```
+
+Nine steps, no failures. The dashed box is the only conditional step: below $500 there is no
+approver. How the bank confirms is chosen by amount as well.
+
+### Every path, including the failures
+
+```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 30, "rankSpacing": 40, "padding": 8}} }%%
+flowchart TD
+    START(["processPayout(request)<br/>RECEIVED"]):::term
+    A_VALIDATE["validatePayout"]:::act
+    A_RESERVE["reserveFunds"]:::act
+    A_FX["validateFxQuote"]:::act
+    TIER{"approval<br/>needed?"}:::dec
+    AWAIT_APP["AWAITING_APPROVAL<br/>approve signal vs 30s timer"]:::wait
+    A_SUBMIT["submitToRail"]:::act
+    AMT{"under<br/>$100?"}:::dec
+    A_SETTLE["settleWithBank"]:::act
+    AWAIT_BANK["AWAITING_BANK_CONFIRMATION<br/>bankStatusUpdate signal vs 45s timer"]:::wait
+    A_POLL["pollBankStatus"]:::act
+    REPORTED{"bank<br/>status"}:::dec
+    A_MARK_OK["markPayout COMPLETED"]:::act
+    A_NOTIFY_OK["notify customer"]:::act
+    DONE(["COMPLETED"]):::ok
+    COMPENSATING["COMPENSATING"]:::fail
+    NOTE["failureCategory is one of VALIDATION,<br/>RAIL_PERMANENT, BANK_REJECTED, APPROVAL_TIMEOUT,<br/>APPROVAL_DECLINED, UNKNOWN_BANK_STATUS"]:::note
+    R1["reverseRailInstruction"]:::act
+    R2["releaseReservedFunds"]:::act
+    A_MARK_BAD["markPayout FAILED or CANCELLED"]:::act
+    A_NOTIFY_BAD["notify customer"]:::act
+    TERM{"approval timeout<br/>or declined?"}:::dec
+    CANCELLED(["CANCELLED"]):::bad
+    FAILED(["FAILED"]):::bad
+
+    START -->|"VALIDATING"| A_VALIDATE
+    A_VALIDATE -->|"VALIDATED"| A_RESERVE
+    A_RESERVE -->|"FUNDS_RESERVED"| A_FX
+    A_FX -->|"FX_QUOTE_VALIDATED"| TIER
+    TIER -->|"no · SUBMITTING_TO_BANK"| A_SUBMIT
+    TIER -->|"L1 or SENIOR"| AWAIT_APP
+    AWAIT_APP -->|"APPROVED · SUBMITTING_TO_BANK"| A_SUBMIT
+    A_SUBMIT -->|"SUBMITTED_TO_BANK"| AMT
+    AMT -->|"yes · SETTLING_WITH_BANK"| A_SETTLE
+    AMT -->|"no"| AWAIT_BANK
+    A_SETTLE --> REPORTED
+    AWAIT_BANK -->|"COMPLETED or REJECTED"| REPORTED
+    AWAIT_BANK -->|"ACCEPTED, or no callback<br/>POLLING_BANK_STATUS"| A_POLL
+    A_POLL --> REPORTED
+    REPORTED -->|"COMPLETED"| A_MARK_OK
+    A_MARK_OK --> A_NOTIFY_OK
+    A_NOTIFY_OK --> DONE
+    A_VALIDATE -.->|"non-retryable, or retries exhausted"| COMPENSATING
+    A_RESERVE -.-> COMPENSATING
+    A_FX -.-> COMPENSATING
+    A_SUBMIT -.-> COMPENSATING
+    A_SETTLE -.-> COMPENSATING
+    AWAIT_APP -.->|"declined, or 30s timer first"| COMPENSATING
+    REPORTED -.->|"REJECTED, or UNKNOWN after polling"| COMPENSATING
+    COMPENSATING -.- NOTE
+    COMPENSATING --> R1
+    R1 -->|"reverse registration order"| R2
+    R2 -->|"COMPENSATED"| A_MARK_BAD
+    A_MARK_BAD --> A_NOTIFY_BAD
+    A_NOTIFY_BAD --> TERM
+    TERM -->|"yes"| CANCELLED
+    TERM -->|"no"| FAILED
+
+    linkStyle 17,18,19,20,21,22,23 stroke:#dc2626,stroke-width:1.5px,opacity:0.5
+    linkStyle 24 stroke:#d97706,stroke-width:1px,opacity:0.5
+
+    classDef act fill:#ecfdf5,stroke:#059669,color:#111827
+    classDef wait fill:#fff7ed,stroke:#d97706,color:#111827
+    classDef dec fill:#f8fafc,stroke:#64748b,color:#111827
+    classDef fail fill:#fef2f2,stroke:#dc2626,stroke-width:2px,color:#111827
+    classDef note fill:#fffbeb,stroke:#d97706,color:#111827
+    classDef ok fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#111827
+    classDef bad fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#111827
+    classDef term fill:#f1f5f9,stroke:#334155,color:#111827
+```
+
+Three things the diagram does not show:
+
+- Each compensation is registered before the activity it undoes, so the release is keyed on
+  `payoutId` rather than the reservation id.
+- A validation failure reaches `COMPENSATING` like any other. The saga has nothing registered at
+  that point, so it runs nothing and the payout still ends `FAILED`.
+- Both durable waits use an explicit `Workflow.newTimer` in a cancellation scope rather than
+  `Workflow.await(timeout, cond)`, and the signal handlers ignore arrivals after the deadline.
 
 ---
 
@@ -132,7 +259,7 @@ again — Worker Deployments, i.e. versioning.
 
 ```
 Browser ──► Caddy :8080 ──┬─► /, /assets/*, /demo-api/*  ──► Spring Boot :8081 (host)
-                          └─► everything else            ──► Temporal Web :8233 (host)
+                          └─► everything else            ──► Temporal UI :8233 (host)
 
 Prometheus :9090 ──┬─► temporal server :8000/metrics
                    └─► backend :8081/demo-api/actuator/prometheus  (SDK + business metrics)
@@ -143,10 +270,10 @@ Only Caddy, Prometheus and Grafana are containers. Temporal and the backend run 
 which keeps the edit-run loop fast and makes the "kill the app and watch the workflow survive"
 case a plain `kill -9`.
 
-**Why the demo owns only three route prefixes.** Temporal Web is a SvelteKit SPA that loads
+**Why the demo owns only three route prefixes.** Temporal UI is a SvelteKit SPA that loads
 its assets from absolute paths (`/_app/immutable/...`). Mounting it under a stripped prefix
 breaks it. Giving Temporal the catch-all and namespacing the demo instead means those paths
-resolve unchanged — at the cost of one rule: every route this app adds must live under `/`,
+resolve unchanged, at the cost of one rule: every route this app adds must live under `/`,
 `/assets/*` or `/demo-api/*`. Spring's own `/error` and `/actuator` are moved inside
 `/demo-api` for exactly this reason.
 
@@ -158,24 +285,23 @@ resolve unchanged — at the cost of one rule: every route this app adds must li
 `SettlementThresholds.SYNC_BELOW_MINOR` ($100) the rail answers inside the `settleWithBank`
 activity: no signal, no 45s timer, `SETTLING_WITH_BANK` in the timeline. At or above it the
 workflow waits durably on the callback. Scenarios 1-3 start below the threshold so they run
-start to finish unattended; 4 and 5 start above it, because the durable wait is the thing they
-are demonstrating. The activity answers with the scenario's `resolvedStatus` rather than rolling
-for an outcome, so a demo button settles the same way every run, and the load simulator posts
-its own 80/20 split to keep a mix.
+start to finish unattended; 4 and 5 start above it, because the durable wait is their subject.
+The activity answers with the scenario's `resolvedStatus` rather than rolling for an outcome, so
+a demo button settles the same way every run, and the load simulator posts its own 80/20 split
+to keep a mix.
 
-Replacing one branch with another is the standard way to break replay, so
-`Workflow.getVersion("inline-settlement-for-low-value", ...)` gates it and executions started
-before the change find no marker and keep the wait they committed to. The version is consulted
-*after* the amount test, so no marker is written on the majority path. The Java SDK does not
-record `TemporalChangeVersion` itself, so the workflow upserts it by hand, which turns retiring
-the patch into a query:
+`Workflow.getVersion("inline-settlement-for-low-value", ...)` gates that branch, so executions
+started before the change find no marker and keep the wait. The version is consulted *after* the
+amount test, so no marker is written on the majority path. The Java SDK does not record
+`TemporalChangeVersion` itself, so the workflow upserts it by hand, which turns retiring the
+patch into a query:
 
 ```bash
 temporal workflow list --query 'TemporalChangeVersion IS NULL AND ExecutionStatus="Running"'
 ```
 
 `src/test/resources/histories/` holds real executions recorded before a change, and
-`PayoutWorkflowReplayTest` replays every one of them against the current workflow code — the
+`PayoutWorkflowReplayTest` replays every one of them against the current workflow code, the
 guard for a change that would break runs already in flight. Two are committed:
 `pre-inline-settlement-low-value.json`, which fails without this gate, and
 `approval-with-timers.json`, an approval run covering both timer outcomes, one cancelled by the
@@ -184,26 +310,25 @@ signal and one fired. The directory's own README says which shapes are worth kee
 **`spring.temporal.connection.target` must not be `local`.** The starter special-cases that
 value and calls `WorkflowServiceStubs.newLocalServiceStubs()`, which silently discards the
 metrics scope *and* the stub customizers. Spelling out `127.0.0.1:7233` takes the normal path.
-This is the difference between having SDK metrics and not having them.
+Without it there are no SDK metrics.
 
 **Serialization is kotlinx, not Jackson.** `KotlinxJsonPayloadConverter` declares the same
 `json/plain` encoding as Jackson, so it replaces Jackson in the converter chain while payloads
-stay readable in Temporal Web. `EncodingKeys` is package-private in the SDK, so the wire
+stay readable in Temporal UI. `EncodingKeys` is package-private in the SDK, so the wire
 constants are inlined.
 
-**Every workflow and activity boundary takes exactly one `@Serializable` data class.** This is
-load-bearing, not stylistic: `PayloadConverter.toData()` only ever sees the runtime object, so
-sealed types, bare generics and top-level nulls lose their type information. Model variants as
-a flat data class with an enum discriminator.
+**Every workflow and activity boundary takes exactly one `@Serializable` data class.**
+`PayloadConverter.toData()` only ever sees the runtime object, so sealed types, bare generics
+and top-level nulls lose their type information. Model variants as a flat data class with an
+enum discriminator.
 
 **`runBlocking` belongs at the activity boundary and nowhere else.** Activity signatures stay
 non-suspend because the Java SDK invokes them reflectively and cannot accept a `Continuation`.
-Inside the body it is ordinary coroutine code — `delay()`, never `Thread.sleep`. None of this
-touches determinism: activities are not re-executed on replay.
+Inside the body it is ordinary coroutine code — `delay()`, never `Thread.sleep`.
 
 **The dev server's throughput ceiling is SQLite's journal mode.** `temporal server start-dev`
-leaves the database in rollback-journal mode, where readers and writers are mutually exclusive
-— the signature is a read slower than a write. `scripts/start-temporal.sh` starts it with
+leaves the database in rollback-journal mode, where readers and writers are mutually exclusive.
+The signature is a read slower than a write. `scripts/start-temporal.sh` starts it with
 `--sqlite-pragma journal_mode=WAL` and raises `history.shardIOConcurrency` from its default of
 1, which is what lets the load simulator sustain roughly 45–50 payouts/s rather than building a
 backlog. Above that the constraint is the server retiring history tasks, not the size of the
@@ -211,10 +336,10 @@ worker fleet: scaling workers up while executor slots sit idle does not help.
 
 **Business metrics come from the API layer**, never from workflow code, where a counter would
 double-count on every replay. `StatusCollector` derives them from a Temporal visibility query
-over the `businessStatus` search attribute — the same query you would type into the Temporal
-Web filter box. Only the states in `FINDABLE_STATUSES` publish that attribute, so those are the
-ones a query can filter on; dropping the rest changes the command stream, so it sits behind a
-second version marker, `visibility-milestones-only`.
+over the `businessStatus` search attribute, the same query the Temporal UI filter box takes.
+Only the states in `FINDABLE_STATUSES` publish that attribute, so those are the ones a query can
+filter on; dropping the rest changes the command stream, so it sits behind a second version
+marker, `visibility-milestones-only`.
 
 **Workflow IDs use `REJECT_DUPLICATE`.** The default `AllowDuplicate` permits a second payout
 once the first has *closed*, which is the wrong answer for a system that must not pay twice.
@@ -255,7 +380,7 @@ provisioned and embedded.
 
 Single backend implementation today. `backend/contract/` describes what a second SDK
 implementation would have to satisfy, and `scripts/contract-test.sh` is that contract made
-executable — it drives the HTTP API only, so any future backend can be checked against it.
+executable. It drives the HTTP API only, so any future backend can be checked against it.
 
 Alongside it, `make build` runs two JUnit 5 suites that need nothing running: a unit suite on
 `TestWorkflowEnvironment` with time skipping (which is how the 30s approval and 45s bank
@@ -263,16 +388,16 @@ deadlines get tested at all), and an integration suite that boots the whole Spri
 against the SDK's in-memory test server. Those are Java-SDK-specific and deliberately not part
 of the cross-SDK contract.
 
-One test in the unit suite looks out of place and is not: every backend test supplies its own
-request, so nothing covered the request the *UI* posts. `DemoScenarioDefaultsTest` reads the
-shipped `app.js`, reconstructs every body the five buttons can send, and checks each one
-against the production constants — amounts against `ApprovalThresholds`, every JSON key against
-`StartPayoutBody`, and the injected failure counts against the smallest retry cap the workflow
-can draw. Each of those fails silently in the browser: unknown JSON properties are dropped
-rather than rejected, so a stale key returns 200 and the scenario runs on defaults.
+Every backend test supplies its own request, so nothing covered the request the *UI* posts.
+`DemoScenarioDefaultsTest` closes that gap. It reads the shipped `app.js`, reconstructs every
+body the five buttons can send, and checks each one against the production constants — amounts
+against `ApprovalThresholds`, every JSON key against `StartPayoutBody`, and the injected failure
+counts against the smallest retry cap the workflow can draw. Each of those fails silently in the
+browser: unknown JSON properties are dropped rather than rejected, so a stale key returns 200 and
+the scenario runs on defaults.
 
-`PayoutWorkflowReplayTest` is the other guard worth knowing about. It generates histories
-in-process, and also replays any `temporal workflow show --output json` export left in
+`PayoutWorkflowReplayTest` is the other guard. It generates histories in-process, and also
+replays any `temporal workflow show --output json` export left in
 `src/test/resources/histories/`, which is how a change that would break in-flight executions
 gets caught before it ships.
 
