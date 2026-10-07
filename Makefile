@@ -49,6 +49,13 @@ preflight:
 	fi
 	@echo "== Fonts =="
 	@ls backend/kotlin/src/main/resources/static/assets/fonts/*.woff2 2>/dev/null | sed 's/^/  OK   /' || echo "  MISS fonts"
+	@echo "== Local AI =="
+	@if command -v ollama >/dev/null 2>&1; then \
+	  echo "  OK   ollama"; \
+	  if ollama show qwen3.5:9b >/dev/null 2>&1 || test -f "$$HOME/.ollama/models/manifests/registry.ollama.ai/library/qwen3.5/9b"; then \
+	    echo "  OK   qwen3.5:9b"; \
+	  else echo "  MISS qwen3.5:9b — run 'ollama pull qwen3.5:9b'"; fi; \
+	else echo "  MISS ollama — AI briefs will fall back to human review"; fi
 
 start:
 	@bash scripts/start-demo.sh

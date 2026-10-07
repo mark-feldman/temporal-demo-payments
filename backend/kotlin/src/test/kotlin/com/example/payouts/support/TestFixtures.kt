@@ -6,13 +6,18 @@ import com.example.payouts.activities.LedgerActivities
 import com.example.payouts.activities.NotificationActivities
 import com.example.payouts.activities.RailActivities
 import com.example.payouts.activities.ValidationActivities
+import com.example.payouts.activities.AiBriefActivities
+import com.example.payouts.activities.CustomerInvestigationActivities
 import com.example.payouts.app.TemporalConfig
 import com.example.payouts.model.activity.*
 import com.example.payouts.model.domain.BankStatus
+import com.example.payouts.model.domain.ApprovalThresholds
 import com.example.payouts.model.domain.Money
 import com.example.payouts.model.domain.Rail
 import com.example.payouts.model.domain.Region
 import com.example.payouts.model.workflow.ProcessPayoutRequest
+import com.example.payouts.model.workflow.AiBrief
+import com.example.payouts.model.workflow.AiReviewItem
 import com.example.payouts.scenario.ScenarioStore
 import com.example.payouts.workflow.PayoutWorkflowImpl
 import com.example.payouts.workflow.TASK_QUEUE
@@ -170,7 +175,7 @@ data class ActivityCall(
  */
 class RecordingActivities(
     private val scenarios: ScenarioStore,
-) : ValidationActivities, LedgerActivities, FxActivities, RailActivities, BankActivities, NotificationActivities {
+) : ValidationActivities, LedgerActivities, FxActivities, RailActivities, BankActivities, NotificationActivities, AiBriefActivities, CustomerInvestigationActivities {
 
     val calls: MutableList<ActivityCall> = Collections.synchronizedList(mutableListOf())
 
@@ -182,6 +187,8 @@ class RecordingActivities(
      * retry policy completes.
      */
     var releaseFailures: Int = 0
+    var aiBriefFails: Boolean = false
+    var aiInvestigationFails: Boolean = false
 
     fun steps(): List<String> = synchronized(calls) { calls.map { it.step } }
 
@@ -234,6 +241,56 @@ class RecordingActivities(
                 // Fixed rather than System.currentTimeMillis: nothing reads it, and a moving
                 // value in a recorded activity result is noise in a history diff.
                 expiresAtEpochMs = 0L,
+            )
+        }
+
+    override fun chooseInvestigation(request: ChooseInvestigationRequest) =
+        run("chooseInvestigation", "ai") {
+            if (aiInvestigationFails) throw ApplicationFailure.newFailure("model unavailable", "ModelUnavailable")
+            val typicalLowValue = request.usdEquivalentMinor < ApprovalThresholds.L1_FROM_MINOR &&
+                request.reviewFacts.size == 1 &&
+                request.reviewFacts.single().equals("typical customer behavior", ignoreCase = true)
+            InvestigationChoice(
+                if (request.reviewFacts.isEmpty() || typicalLowValue) emptyList() else listOf("CUSTOMER_PROFILE", "RECENT_PAYOUTS"),
+                when {
+                    request.reviewFacts.isEmpty() -> "No review facts supplied"
+                    typicalLowValue -> "Typical customer behavior and amount below the manual-review threshold"
+                    else -> "Check customer context for supplied review facts"
+                },
+            )
+        }
+
+    override fun markInvestigationSkipped(choice: InvestigationChoice) =
+        run("markInvestigationSkipped", "ai") {
+            check(choice.tools.isEmpty())
+            choice
+        }
+
+    override fun lookupCustomerProfile(request: CustomerLookupRequest) =
+        run("lookupCustomerProfile", request.customerId) {
+            CustomerLookupResponse("synthetic verified customer; 2 prior recipients")
+        }
+
+    override fun lookupRecentPayouts(request: CustomerLookupRequest) =
+        run("lookupRecentPayouts", request.customerId) {
+            CustomerLookupResponse("synthetic prior payouts: USD 220, USD 310, USD 260")
+        }
+
+    override fun draftAiBrief(request: DraftAiBriefRequest) =
+        run("draftAiBrief", "ai") {
+            if (aiBriefFails) throw ApplicationFailure.newFailure("model unavailable", "ModelUnavailable")
+            val typicalLowValue = request.usdEquivalentMinor < ApprovalThresholds.L1_FROM_MINOR &&
+                request.reviewFacts.size == 1 &&
+                request.reviewFacts.single().equals("typical customer behavior", ignoreCase = true)
+            DraftAiBriefResponse(
+                AiBrief(
+                    summary = "Review this payout",
+                    reviewItems = if (typicalLowValue) emptyList() else request.reviewFacts.map { AiReviewItem(it, "Check this supplied fact") },
+                    model = "test-qwen",
+                    recommendation = if (typicalLowValue) "NO_REVIEW_NEEDED" else "ESCALATE_REVIEW",
+                    investigation = request.investigation,
+                    investigationSkipReason = request.investigationSkipReason,
+                ),
             )
         }
 

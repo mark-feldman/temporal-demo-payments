@@ -57,6 +57,8 @@ class PayoutWorkflowImpl : PayoutWorkflow {
     private var usdEquivalentMinor = 0L
     private var payoutId = ""
     private var reversalReference = ""
+    private var aiBrief: AiBrief? = null
+    private var aiBriefAttempted = false
     // Deadline flags flipped by timer callbacks. Callbacks and signal handlers run in event
     // order, so whether the signal beat the deadline is decided by which of the two ran first.
     /** Set once, at the top of processPayout. See [FINDABLE_STATUSES]. */
@@ -142,6 +144,51 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             setTaskQueue(TASK_QUEUE)
             setSummary("Check FX quote validity")
             setRetryOptions(demoRetry().toBuilder().setDoNotRetry("FxQuoteExpired").build())
+        },
+    )
+
+    /** One bounded attempt: model failure must not block a human approval. */
+    private val ai = Workflow.newActivityStub(
+        AiBriefActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(30))
+            setScheduleToCloseTimeout(Duration.ofSeconds(30))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("Draft AI payout brief")
+            setRetryOptions { setMaximumAttempts(1) }
+        },
+    )
+
+    private val aiInvestigation = Workflow.newActivityStub(
+        AiBriefActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(15))
+            setScheduleToCloseTimeout(Duration.ofSeconds(15))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("AI chooses customer investigation tools")
+            setRetryOptions { setMaximumAttempts(1) }
+        },
+    )
+
+    private val aiSkipMarker = Workflow.newActivityStub(
+        AiBriefActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(3))
+            setScheduleToCloseTimeout(Duration.ofSeconds(3))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("AI decided no investigation is needed")
+            setRetryOptions { setMaximumAttempts(1) }
+        },
+    )
+
+    private val customerInvestigation = Workflow.newActivityStub(
+        CustomerInvestigationActivities::class.java,
+        ActivityOptions {
+            setStartToCloseTimeout(Duration.ofSeconds(3))
+            setScheduleToCloseTimeout(Duration.ofSeconds(3))
+            setTaskQueue(TASK_QUEUE)
+            setSummary("Look up synthetic customer evidence")
+            setRetryOptions { setMaximumAttempts(1) }
         },
     )
 
@@ -241,9 +288,72 @@ class PayoutWorkflowImpl : PayoutWorkflow {
             advance(BusinessStatus.FX_QUOTE_VALIDATED, "FX quote valid, USD equivalent recorded")
 
             approvalTier = ApprovalThresholds.tierFor(usdEquivalentMinor)
-            if (approvalTier != ApprovalTier.NONE && !awaitApproval(request)) {
-                // Cancelled: compensation runs in the catch below via the same saga.
-                throw ApprovalDeclined()
+            if (approvalTier != ApprovalTier.NONE || request.aiBriefEnabled) {
+                // Old histories lack this marker, so they schedule no new Activity on replay
+                // and retain the original 30s approval timer when approval is required.
+                if (request.aiBriefEnabled && Workflow.getVersion(
+                        AI_BRIEF_CHANGE, Workflow.DEFAULT_VERSION, AI_BRIEF_VERSION,
+                    ) >= AI_BRIEF_VERSION
+                ) {
+                    aiBriefAttempted = true
+                    step = "Drafting AI approval brief"
+                    val investigation = mutableListOf<AiInvestigationStep>()
+                    var investigationSkipReason = ""
+                    aiBrief = try {
+                        if (Workflow.getVersion(
+                                AI_INVESTIGATION_CHANGE, Workflow.DEFAULT_VERSION, AI_INVESTIGATION_VERSION,
+                            ) >= AI_INVESTIGATION_VERSION
+                        ) {
+                            step = "AI deciding whether to investigate"
+                            val choice = aiInvestigation.chooseInvestigation(
+                                ChooseInvestigationRequest(request.amount, usdEquivalentMinor, request.reviewFacts),
+                            )
+                            val selectedTools = choice.tools.filter {
+                                it == "CUSTOMER_PROFILE" || it == "RECENT_PAYOUTS"
+                            }.distinct().take(2)
+                            if (selectedTools.isEmpty()) {
+                                investigationSkipReason = choice.reason
+                                step = "AI skipped customer investigation"
+                                if (Workflow.getVersion(
+                                        AI_SKIP_MARKER_CHANGE, Workflow.DEFAULT_VERSION, AI_SKIP_MARKER_VERSION,
+                                    ) >= AI_SKIP_MARKER_VERSION
+                                ) {
+                                    aiSkipMarker.markInvestigationSkipped(InvestigationChoice(emptyList(), choice.reason))
+                                }
+                            }
+                            selectedTools.forEach { tool ->
+                                step = "AI investigating: $tool"
+                                val lookup = CustomerLookupRequest(request.customerId)
+                                val finding = when (tool) {
+                                    "CUSTOMER_PROFILE" -> customerInvestigation.lookupCustomerProfile(lookup).finding
+                                    "RECENT_PAYOUTS" -> customerInvestigation.lookupRecentPayouts(lookup).finding
+                                    else -> null
+                                }
+                                if (finding != null) investigation += AiInvestigationStep(tool, choice.reason, finding)
+                            }
+                        }
+                        step = "AI drafting recommendation from evidence"
+                        ai.draftAiBrief(
+                            DraftAiBriefRequest(
+                                amount = request.amount,
+                                usdEquivalentMinor = usdEquivalentMinor,
+                                rail = request.rail,
+                                region = request.region,
+                                reviewFacts = request.reviewFacts,
+                                investigation = investigation,
+                                investigationSkipReason = investigationSkipReason,
+                            ),
+                        ).brief
+                    } catch (e: ActivityFailure) {
+                        log.warn("AI brief unavailable; continuing payout workflow", e)
+                        AiBrief(summary = "AI brief unavailable. Review the payout facts directly.", unavailable = true,
+                            investigation = investigation, investigationSkipReason = investigationSkipReason)
+                    }
+                }
+                if (approvalTier != ApprovalTier.NONE && !awaitApproval(request)) {
+                    // Cancelled: compensation runs in the catch below via the same saga.
+                    throw ApprovalDeclined()
+                }
             }
 
             // Rail selection is deterministic workflow code, not an Activity: no I/O. It is
@@ -326,6 +436,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         usdEquivalentMinor = usdEquivalentMinor,
         reversalReference = reversalReference,
         history = history.toList(),
+        aiBrief = aiBrief,
     )
 
     // ---- internals ----
@@ -531,7 +642,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         )
     }
 
-    private fun approvalTimeoutSeconds() = Workflow.getInfo().searchAttributes.let { 30L }
+    private fun approvalTimeoutSeconds() = if (aiBriefAttempted) 60L else 30L
 
     private fun bankCallbackTimeoutSeconds() = 45L
 
@@ -557,6 +668,13 @@ class PayoutWorkflowImpl : PayoutWorkflow {
 
         const val VISIBILITY_MILESTONES_CHANGE = "visibility-milestones-only"
         const val VISIBILITY_MILESTONES_VERSION = 1
+
+        const val AI_BRIEF_CHANGE = "ai-approval-brief"
+        const val AI_BRIEF_VERSION = 1
+        const val AI_INVESTIGATION_CHANGE = "ai-investigation-tools"
+        const val AI_INVESTIGATION_VERSION = 1
+        const val AI_SKIP_MARKER_CHANGE = "ai-investigation-skip-marker"
+        const val AI_SKIP_MARKER_VERSION = 1
 
         /**
          * The statuses written to the visibility store, so a payout can be found in them by a

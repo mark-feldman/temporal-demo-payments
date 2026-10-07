@@ -11,6 +11,27 @@ interface ValidationActivities {
 }
 
 @ActivityInterface
+interface AiBriefActivities {
+    @ActivityMethod
+    fun chooseInvestigation(request: ChooseInvestigationRequest): InvestigationChoice
+
+    @ActivityMethod
+    fun markInvestigationSkipped(choice: InvestigationChoice): InvestigationChoice
+
+    @ActivityMethod
+    fun draftAiBrief(request: DraftAiBriefRequest): DraftAiBriefResponse
+}
+
+@ActivityInterface
+interface CustomerInvestigationActivities {
+    @ActivityMethod
+    fun lookupCustomerProfile(request: CustomerLookupRequest): CustomerLookupResponse
+
+    @ActivityMethod
+    fun lookupRecentPayouts(request: CustomerLookupRequest): CustomerLookupResponse
+}
+
+@ActivityInterface
 interface LedgerActivities {
     @ActivityMethod
     fun reserveFunds(request: ReserveFundsRequest): ReserveFundsResponse

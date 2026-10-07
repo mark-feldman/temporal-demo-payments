@@ -23,7 +23,27 @@ data class ProcessPayoutRequest(
     val region: Region,
     val scenarioName: String,
     val idempotencyKey: String,
+    /** Manual demo runs only; load simulation leaves this false. */
+    val aiBriefEnabled: Boolean = false,
+    val reviewFacts: List<String> = emptyList(),
 )
+
+@Serializable
+data class AiReviewItem(val fact: String, val note: String)
+
+@Serializable
+data class AiBrief(
+    val summary: String,
+    val reviewItems: List<AiReviewItem> = emptyList(),
+    val model: String = "",
+    val unavailable: Boolean = false,
+    val recommendation: String = "",
+    val investigation: List<AiInvestigationStep> = emptyList(),
+    val investigationSkipReason: String = "",
+)
+
+@Serializable
+data class AiInvestigationStep(val tool: String, val reason: String, val finding: String)
 
 @Serializable
 data class ProcessPayoutResponse(
@@ -62,4 +82,5 @@ data class PayoutStatusResponse(
     /** Set when the saga reversed an instruction the bank had already accepted. */
     val reversalReference: String = "",
     val history: List<String> = emptyList(),
+    val aiBrief: AiBrief? = null,
 )

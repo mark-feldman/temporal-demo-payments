@@ -90,6 +90,37 @@ class PayoutWorkflowReplayTest : PayoutWorkflowTestBase() {
     }
 
     @Test
+    fun `a Qwen brief and its longer approval timer replay`() {
+        startWorker()
+        val stub = newStub("replay-ai-approval")
+        start(stub, payoutRequest(amountMinor = 250_000).copy(
+            aiBriefEnabled = true,
+            reviewFacts = listOf("new recipient"),
+        ))
+        awaitStatus(stub, BusinessStatus.AWAITING_APPROVAL)
+        stub.approve(ApprovalDecisionRequest(approved = true, approver = "dana"))
+        awaitStatus(stub, BusinessStatus.AWAITING_BANK_CONFIRMATION)
+        stub.bankStatusUpdate(BankStatusUpdateRequest(BankStatus.COMPLETED))
+        resultOf(stub)
+
+        replay(client.fetchHistory("replay-ai-approval"))
+    }
+
+    @Test
+    fun `a skipped AI investigation marker replays`() {
+        startWorker()
+        val stub = newStub("replay-ai-skip")
+        start(stub, payoutRequest(amountMinor = 250_000).copy(aiBriefEnabled = true))
+        awaitStatus(stub, BusinessStatus.AWAITING_APPROVAL)
+        stub.approve(ApprovalDecisionRequest(approved = true, approver = "dana"))
+        awaitStatus(stub, BusinessStatus.AWAITING_BANK_CONFIRMATION)
+        stub.bankStatusUpdate(BankStatusUpdateRequest(BankStatus.COMPLETED))
+        resultOf(stub)
+
+        replay(client.fetchHistory("replay-ai-skip"))
+    }
+
+    @Test
     fun `a polling run replays without a non-determinism error`() {
         scenarios.put(
             "po-000001",

@@ -23,6 +23,77 @@ import kotlin.test.assertTrue
 class PayoutWorkflowApprovalTest : PayoutWorkflowTestBase() {
 
     @Test
+    fun `manual approval includes a grounded AI brief before the approval timer`() {
+        startWorker()
+        val stub = newStub("approval-ai-brief")
+        start(stub, payoutRequest(amountMinor = 250_000).copy(
+            aiBriefEnabled = true,
+            reviewFacts = listOf("new recipient", "unusual amount for this customer"),
+        ))
+
+        val parked = awaitStatus(stub, BusinessStatus.AWAITING_APPROVAL)
+        assertEquals("test-qwen", parked.aiBrief?.model)
+        assertEquals("new recipient", parked.aiBrief?.reviewItems?.first()?.fact)
+        assertEquals("ESCALATE_REVIEW", parked.aiBrief?.recommendation)
+        assertEquals(2, parked.aiBrief?.investigation?.size)
+        assertEquals(1, activities.callsTo("chooseInvestigation").size)
+        assertTrue(activities.callsTo("markInvestigationSkipped").isEmpty())
+        assertEquals(1, activities.callsTo("lookupCustomerProfile").size)
+        assertEquals(1, activities.callsTo("lookupRecentPayouts").size)
+        assertEquals(1, activities.callsTo("draftAiBrief").size)
+        assertTrue(activities.callsTo("submitToRail").isEmpty())
+        val approvalTimer = client.fetchHistory("approval-ai-brief").history.eventsList
+            .single { it.eventType == EventType.EVENT_TYPE_TIMER_STARTED }
+        assertEquals(60L, approvalTimer.timerStartedEventAttributes.startToFireTimeout.seconds)
+    }
+
+    @Test
+    fun `an AI failure falls back to human approval without moving money`() {
+        activities.aiBriefFails = true
+        startWorker()
+        val stub = newStub("approval-ai-fallback")
+        start(stub, payoutRequest(amountMinor = 250_000).copy(aiBriefEnabled = true))
+
+        val parked = awaitStatus(stub, BusinessStatus.AWAITING_APPROVAL)
+        assertTrue(parked.aiBrief?.unavailable == true)
+        assertEquals(1, activities.callsTo("draftAiBrief").size)
+        assertTrue(activities.callsTo("submitToRail").isEmpty())
+    }
+
+    @Test
+    fun `an investigation failure still reaches human approval`() {
+        activities.aiInvestigationFails = true
+        startWorker()
+        val stub = newStub("approval-investigation-fallback")
+        start(stub, payoutRequest(amountMinor = 250_000).copy(aiBriefEnabled = true))
+
+        val parked = awaitStatus(stub, BusinessStatus.AWAITING_APPROVAL)
+        assertTrue(parked.aiBrief?.unavailable == true)
+        assertTrue(activities.callsTo("lookupCustomerProfile").isEmpty())
+        assertTrue(activities.callsTo("submitToRail").isEmpty())
+    }
+
+    @Test
+    fun `the agent can skip customer lookups when no review facts are supplied`() {
+        startWorker()
+        val stub = newStub("approval-no-investigation")
+        start(stub, payoutRequest(amountMinor = 250_000).copy(aiBriefEnabled = true))
+
+        val parked = awaitStatus(stub, BusinessStatus.AWAITING_APPROVAL)
+        assertTrue(parked.aiBrief?.investigation?.isEmpty() == true)
+        assertEquals("No review facts supplied", parked.aiBrief?.investigationSkipReason)
+        assertEquals(1, activities.callsTo("chooseInvestigation").size)
+        assertEquals(1, activities.callsTo("markInvestigationSkipped").size)
+        assertTrue(activities.callsTo("lookupCustomerProfile").isEmpty())
+        assertTrue(activities.callsTo("lookupRecentPayouts").isEmpty())
+        assertEquals(1, activities.callsTo("draftAiBrief").size)
+        val scheduled = client.fetchHistory("approval-no-investigation").history.eventsList
+            .filter { it.eventType == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED }
+            .map { it.activityTaskScheduledEventAttributes.activityType.name }
+        assertTrue("MarkInvestigationSkipped" in scheduled, "the skip must appear on Temporal's timeline")
+    }
+
+    @Test
     fun `an amount over the senior threshold parks on a signal`() {
         startWorker()
         val stub = newStub("approval-senior")

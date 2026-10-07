@@ -48,6 +48,15 @@ const BADGE = {
 }
 const badgeFor = s => BADGE[s] ?? 'badge-running'
 const isTerminal = s => ['COMPLETED', 'FAILED', 'CANCELLED', 'UNKNOWN_BANK_STATUS'].includes(s)
+const formatUsd = minor => new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD',
+}).format(minor / 100)
+const dollarsToMinor = value => {
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(String(value).trim())
+  if (!match) return null
+  const minor = Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'))
+  return Number.isSafeInteger(minor) && minor > 0 ? minor : null
+}
 
 const Eyebrow = ({ children }) => html`<div class="eyebrow mb-2">${children}</div>`
 
@@ -140,6 +149,10 @@ const Notes = ({ items }) => html`
 // ---------------------------------------------------------------------------
 // Scenarios
 // ---------------------------------------------------------------------------
+const DEFAULT_REVIEW_FACTS = {
+  successful: 'typical customer behavior',
+  other: 'new recipient\nunusual amount for this customer',
+}
 const SCENARIOS = [
   {
     id: 'successful', name: 'Successful payout',
@@ -173,12 +186,12 @@ const SCENARIOS = [
   },
   {
     id: 'approval', name: 'Human approval + timeout',
-    blurb: 'Amount above the threshold blocks on a signal. Approve it, reject it, or let the timer fire.',
+    blurb: 'Qwen chooses synthetic customer lookups, writes a recommendation, then waits for human approval.',
     defaults: { scenario: 'approval', amountMinor: 250000, behavior: 'PASS' },
     notes: [
       'The workflow waits durably on a signal: no polling loop and no thread held open.',
       'Stop the application entirely and it is still waiting when the process returns.',
-      'The 30s deadline is a workflow timer, so the timeout is a branch in the workflow code.',
+      'The 60s deadline starts after the AI brief (or fallback) is ready and is a workflow timer.',
       'After approval it waits on the bank callback; the controls above offer whichever signal the workflow is blocked on.',
     ],
   },
@@ -223,6 +236,7 @@ function StatusCard({ status, error }) {
       </div>
       <div class="mono text-xs mt-3" style="color:var(--color-ink-secondary)">${status.currentStep}</div>
       <div class="grid grid-cols-2 gap-2 mt-3 text-xs mono" style="color:var(--color-ink-muted)">
+        ${status.usdEquivalentMinor > 0 && html`<div>USD value <span style="color:var(--color-ink-primary)">${formatUsd(status.usdEquivalentMinor)}</span></div>`}
         <div>payout <span style="color:var(--color-ink-primary)">${status.payoutId}</span></div>
         <div>attempt <span style="color:var(--color-ink-primary)">${status.railAttempts || '—'}</span></div>
         ${status.approvalTier !== 'NONE' && html`<div>tier <span style="color:var(--color-ink-primary)">${status.approvalTier}</span></div>`}
@@ -237,13 +251,23 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
   // type and position and it has no key, so the instance is reused across a switch and a
   // useState initialiser would only run once.
   const [edits, setEdits] = useState({})
-  const amount = edits[scenario.id] ?? scenario.defaults.amountMinor
+  const amount = edits[scenario.id] ?? (scenario.defaults.amountMinor / 100).toFixed(2)
   const setAmount = value => setEdits(prev => ({ ...prev, [scenario.id]: value }))
+  const amountMinor = dollarsToMinor(amount)
+  const [factEdits, setFactEdits] = useState({})
+  const reviewFacts = factEdits[scenario.id] ??
+    (scenario.id === 'successful' ? DEFAULT_REVIEW_FACTS.successful : DEFAULT_REVIEW_FACTS.other)
+  const setReviewFacts = value => setFactEdits(prev => ({ ...prev, [scenario.id]: value }))
+  const [customerId, setCustomerId] = useState('cust-0001')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [pollOutcome, setPollOutcome] = useState('completed')
 
   const start = async () => {
+    if (amountMinor === null) {
+      setNote('Enter a USD amount greater than $0.00, with no more than two decimal places.')
+      return
+    }
     setBusy(true); setNote('')
     try {
       const r = await api('/payouts', {
@@ -251,7 +275,10 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
         body: JSON.stringify({
           ...scenario.defaults,
           ...(scenario.pollOutcomes?.find(o => o.id === pollOutcome)?.cfg ?? {}),
-          amountMinor: Number(amount),
+          amountMinor,
+          aiBriefEnabled: true,
+          customerId,
+          reviewFacts: reviewFacts.split('\n').map(s => s.trim()).filter(Boolean),
         }),
       })
       onStarted(r)
@@ -284,8 +311,23 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
              branch, a timeout or an outcome. -->
         <!-- Under 10000 minor the rail answers inline and there is no callback to signal, so
              the Bank buttons below do not appear. Every scenario default sits above that. -->
-        <${Field} label="Amount (minor units, USD) — under 10000 settles inline, no callback">
-          <input class="input" type="number" value=${amount} onInput=${e => setAmount(e.target.value)} />
+        <${Field} label="Amount to transfer (USD)">
+          <input class="input" type="number" min="0.01" step="0.01" value=${amount}
+                 onInput=${e => setAmount(e.target.value)} aria-label="Amount in US dollars" />
+          <div class="text-xs mt-1" style="color:var(--color-ink-secondary)">
+            ${amountMinor === null ? 'Enter dollars and cents, for example 75.00.' : `${formatUsd(amountMinor)} will be transferred.`}
+            Amounts under $100.00 settle immediately, without a bank callback.
+          </div>
+        <//>
+        <${Field} label="Synthetic review facts for the AI brief — one per line">
+          <textarea class="input" rows="3" value=${reviewFacts}
+                    onInput=${e => setReviewFacts(e.target.value)}></textarea>
+        <//>
+        <${Field} label="Synthetic customer record for AI investigation">
+          <select class="input" value=${customerId} onChange=${e => setCustomerId(e.target.value)}>
+            <option value="cust-0001">cust-0001 · no recorded fraud flags</option>
+            <option value="cust-0002">cust-0002 · unresolved account alert</option>
+          </select>
         <//>
         ${scenario.pollOutcomes && html`
           <${Field} label="When the workflow polls, the bank eventually...">
@@ -293,8 +335,8 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
               ${scenario.pollOutcomes.map(o => html`<option value=${o.id}>${o.label}</option>`)}
             </select>
           <//>`}
-        <button class="btn btn-primary w-full" disabled=${busy} onClick=${start}>
-          ${busy ? 'Starting…' : 'Start payout'}
+        <button class="btn btn-primary w-full" disabled=${busy || amountMinor === null} onClick=${start}>
+          ${busy ? 'Starting…' : amountMinor === null ? 'Enter a valid amount' : `Start ${formatUsd(amountMinor)} payout`}
         </button>
       </div>
 
@@ -318,6 +360,29 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
               </span>`}
           </div>
           <div class="mono text-xs" style="color:var(--color-ink-muted)">${current.workflowId}</div>
+          ${status?.aiBrief && html`
+            <div class="panel p-3 space-y-2">
+              <div class="eyebrow">AI investigation brief · ${status.aiBrief.unavailable ? 'unavailable' : status.aiBrief.model}</div>
+              ${status.aiBrief.recommendation && html`
+                <div class="text-sm"><strong>Recommendation:</strong> ${status.aiBrief.recommendation === 'NO_REVIEW_NEEDED' ? 'No additional review needed' : status.aiBrief.recommendation === 'ESCALATE_REVIEW' ? 'Escalate for closer review' : 'Routine human review'}</div>`}
+              <div class="text-xs" style="color:var(--color-ink-muted)">Advisory only · synthetic evidence cannot establish fraud.</div>
+              <p class="text-sm" style="color:var(--color-ink-secondary)">${status.aiBrief.summary}</p>
+              ${status.aiBrief.investigationSkipReason && html`
+                <div class="text-xs" style="color:var(--color-ink-secondary)">
+                  <strong>Investigation skipped:</strong> ${status.aiBrief.investigationSkipReason}
+                </div>`}
+              ${status.aiBrief.investigation?.length > 0 && html`
+                <div class="text-xs space-y-2" style="color:var(--color-ink-secondary)">
+                  <strong>Agent tool calls · synthetic data</strong>
+                  ${status.aiBrief.investigation.map(step => html`
+                    <div class="panel p-2"><span class="mono">${step.tool}</span> · ${step.reason}<br/>${step.finding}</div>`)}
+                </div>`}
+              ${status.aiBrief.reviewItems?.length > 0 && html`
+                <ul class="text-sm space-y-2">
+                  ${status.aiBrief.reviewItems.map(item => html`
+                    <li><strong>${item.fact}</strong> · ${item.note}</li>`)}
+                </ul>`}
+            </div>`}
           ${note && html`<div class="text-xs" style="color:var(--color-state-warning)">${note}</div>`}
         </div>`}
 

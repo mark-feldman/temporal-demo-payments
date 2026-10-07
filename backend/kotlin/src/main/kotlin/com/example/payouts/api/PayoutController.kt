@@ -33,6 +33,9 @@ data class StartPayoutBody(
     val resolvedStatus: String = "COMPLETED",
     /** When true the bank never answers and polling exhausts its retries. */
     val pollingNeverResolves: Boolean = false,
+    /** One synthetic review fact per line in Scenario controls. */
+    val reviewFacts: List<String> = emptyList(),
+    val aiBriefEnabled: Boolean = false,
 )
 
 /**
@@ -105,6 +108,8 @@ class PayoutController(
             region = body.region,
             scenarioName = body.scenario,
             idempotencyKey = "$payoutId-rail-1",
+            aiBriefEnabled = body.aiBriefEnabled,
+            reviewFacts = body.reviewFacts.map { it.trim() }.filter { it.isNotEmpty() }.take(8).map { it.take(200) },
         )
         val execution = WorkflowClient.start(stub::processPayout, request)
         metrics.started.increment()

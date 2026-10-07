@@ -28,6 +28,25 @@ import kotlin.test.fail
 class PayoutWorkflowCompensationTest : PayoutWorkflowTestBase() {
 
     @Test
+    fun `manual small payout investigates before a permanent rail rejection`() {
+        scenarios.put("po-000001", ScenarioConfig(behavior = Behavior.FAIL_PERMANENT, step = "submitToRail"))
+        startWorker()
+        val stub = newStub("compensation-permanent-ai")
+        start(stub, payoutRequest(amountMinor = 7_500).copy(
+            aiBriefEnabled = true,
+            reviewFacts = listOf("new recipient", "unusual amount for this customer"),
+        ))
+
+        val result = resultOf(stub)
+        assertEquals(BusinessStatus.FAILED, result.status)
+        assertEquals(FailureCategory.RAIL_PERMANENT, result.failureCategory)
+        assertEquals(1, activities.callsTo("lookupCustomerProfile").size)
+        assertEquals(1, activities.callsTo("lookupRecentPayouts").size)
+        assertTrue(activities.steps().indexOf("draftAiBrief") < activities.steps().indexOf("submitToRail"))
+        assertTrue("AWAITING_APPROVAL" !in statesOf(stub))
+    }
+
+    @Test
     fun `two transient rail failures retry and succeed on the third attempt`() {
         scenarios.put(
             "po-000001",

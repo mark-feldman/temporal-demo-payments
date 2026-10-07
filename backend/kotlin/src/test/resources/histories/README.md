@@ -26,6 +26,11 @@ there until someone redeploys compatible code.
 
 ## What is committed here, and why
 
+`pre-all-scenario-ai-low-value.json` — a real 52-event **$75** successful payout with
+`aiBriefEnabled=true` and a synthetic review fact, recorded before AI was enabled for
+low-value demo runs. It has no AI Activity or version marker. Replaying it guards the new
+low-value branch: the old execution must still complete without adding AI commands.
+
 `approval-with-timers.json` — a real 64-event approval run of a **$2,500** payout, exported
 before the deadline timers carried summaries. It is the "timers and signals" shape the list
 above asks for, and it covers both timer outcomes in one history: the approval timer is

@@ -4,6 +4,8 @@ import com.example.payouts.model.domain.BankStatus
 import com.example.payouts.model.domain.Money
 import com.example.payouts.model.domain.Rail
 import com.example.payouts.model.domain.Region
+import com.example.payouts.model.workflow.AiBrief
+import com.example.payouts.model.workflow.AiInvestigationStep
 import kotlinx.serialization.Serializable
 
 // ---- validation ----
@@ -55,6 +57,38 @@ data class ValidateFxQuoteResponse(
     val usdEquivalentMinor: Long,
     val expiresAtEpochMs: Long,
 )
+
+// ---- AI approval brief ----
+
+@Serializable
+data class DraftAiBriefRequest(
+    val amount: Money,
+    val usdEquivalentMinor: Long,
+    val rail: Rail,
+    val region: Region,
+    val reviewFacts: List<String>,
+    val investigation: List<AiInvestigationStep> = emptyList(),
+    val investigationSkipReason: String = "",
+)
+
+@Serializable
+data class DraftAiBriefResponse(val brief: AiBrief)
+
+@Serializable
+data class ChooseInvestigationRequest(
+    val amount: Money,
+    val usdEquivalentMinor: Long,
+    val reviewFacts: List<String>,
+)
+
+@Serializable
+data class InvestigationChoice(val tools: List<String>, val reason: String)
+
+@Serializable
+data class CustomerLookupRequest(val customerId: String)
+
+@Serializable
+data class CustomerLookupResponse(val finding: String)
 
 // ---- rail ----
 

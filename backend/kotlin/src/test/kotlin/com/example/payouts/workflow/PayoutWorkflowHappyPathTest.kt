@@ -7,6 +7,7 @@ import com.example.payouts.model.domain.FailureCategory
 import com.example.payouts.model.workflow.BankStatusUpdateRequest
 import com.example.payouts.support.PayoutWorkflowTestBase
 import com.example.payouts.support.payoutRequest
+import io.temporal.api.enums.v1.EventType
 import io.temporal.api.enums.v1.WorkflowIdReusePolicy
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowExecutionAlreadyStarted
@@ -21,6 +22,32 @@ import kotlin.test.assertTrue
  * confirm by callback, complete.
  */
 class PayoutWorkflowHappyPathTest : PayoutWorkflowTestBase() {
+
+    @Test
+    fun `manual small payout drafts an AI brief without waiting for approval`() {
+        startWorker()
+        val stub = newStub("happy-path-ai-brief")
+        start(stub, payoutRequest(amountMinor = 7_500).copy(
+            aiBriefEnabled = true,
+            reviewFacts = listOf("typical customer behavior"),
+        ))
+
+        val result = resultOf(stub)
+        assertEquals(BusinessStatus.COMPLETED, result.status)
+        assertEquals(ApprovalTier.NONE, stub.currentStatus().approvalTier)
+        assertEquals("test-qwen", stub.currentStatus().aiBrief?.model)
+        assertEquals("NO_REVIEW_NEEDED", stub.currentStatus().aiBrief?.recommendation)
+        assertTrue(stub.currentStatus().aiBrief?.reviewItems.orEmpty().isEmpty())
+        assertEquals(1, activities.callsTo("chooseInvestigation").size)
+        assertEquals(1, activities.callsTo("markInvestigationSkipped").size)
+        assertTrue(activities.callsTo("lookupCustomerProfile").isEmpty())
+        assertTrue(activities.callsTo("lookupRecentPayouts").isEmpty())
+        assertEquals(1, activities.callsTo("draftAiBrief").size)
+        assertTrue("AWAITING_APPROVAL" !in statesOf(stub))
+        assertTrue(client.fetchHistory("happy-path-ai-brief").history.eventsList.none {
+            it.eventType == EventType.EVENT_TYPE_TIMER_STARTED
+        })
+    }
 
     @Test
     fun `small payout completes without ever asking for approval`() {

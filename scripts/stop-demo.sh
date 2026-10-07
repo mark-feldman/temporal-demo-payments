@@ -33,6 +33,13 @@ wait_for_ports() {
 }
 
 echo "Stopping backend..."; pkill -f 'payout-demo.*\.jar|PayoutsApplicationKt' 2>/dev/null || true
+if [[ -f /tmp/payout-demo-ollama.pid ]]; then
+  pid=$(cat /tmp/payout-demo-ollama.pid)
+  if ps -p "$pid" -o command= 2>/dev/null | grep -q 'ollama serve'; then
+    echo "Stopping demo-started Ollama..."; kill "$pid" 2>/dev/null || true
+  fi
+  rm -f /tmp/payout-demo-ollama.pid
+fi
 echo "Stopping containers..."; docker compose down 2>/dev/null || true
 echo "Stopping Temporal..."; pkill -f 'temporal server start-dev' 2>/dev/null || true
 wait_for_ports || exit 1
