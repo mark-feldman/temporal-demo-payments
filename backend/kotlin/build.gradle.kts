@@ -42,6 +42,8 @@ dependencies {
 
     implementation("io.temporal:temporal-spring-boot-starter:$temporalVersion")
     implementation("io.temporal:temporal-kotlin:$temporalVersion")
+    // Experimental contrib module (Public Preview). Versioned with the SDK.
+    implementation("io.temporal:temporal-workflowstreams:$temporalVersion")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")

@@ -5,7 +5,11 @@ import com.example.payouts.model.workflow.*
 import com.example.payouts.scenario.Behavior
 import com.example.payouts.scenario.ScenarioConfig
 import com.example.payouts.scenario.ScenarioStore
+import com.example.payouts.model.memo.MemoKeys
+import com.example.payouts.model.memo.PaymentMemo
+import com.example.payouts.workflow.PaymentRequestWorkflow
 import com.example.payouts.workflow.PayoutWorkflow
+import com.example.payouts.workflow.processingWorkflowIdFor
 import com.example.payouts.workflow.TASK_QUEUE
 import io.temporal.api.enums.v1.WorkflowIdReusePolicy
 import io.temporal.client.WorkflowClient
@@ -35,6 +39,9 @@ data class StartPayoutBody(
     val pollingNeverResolves: Boolean = false,
 )
 
+/** Scenario 6: two workflows and a Workflow Stream instead of a PayoutWorkflow. */
+internal const val STREAMED_SCENARIO = "streamed"
+
 /**
  * `po-` plus the first 16 hex characters of a UUIDv7: the 48-bit millisecond timestamp, the
  * version nibble, and the 12-bit counter that keeps ids minted in the same millisecond
@@ -56,6 +63,8 @@ data class StartPayoutResult(
     val workflowId: String,
     val runId: String,
     val temporalUrl: String,
+    /** Scenario 6 only: the workflow hosting the stream, which the browser subscribes to. */
+    val streamWorkflowId: String? = null,
 )
 
 @RestController
@@ -83,6 +92,8 @@ class PayoutController(
                 pollingNeverResolves = body.pollingNeverResolves,
             ),
         )
+
+        if (body.scenario == STREAMED_SCENARIO) return startStreamed(body, payoutId, workflowId)
 
         val stub = client.newWorkflowStub<PayoutWorkflow> {
             setWorkflowId(workflowId)
@@ -115,6 +126,44 @@ class PayoutController(
             workflowId = workflowId,
             runId = execution.runId,
             temporalUrl = "/namespaces/default/workflows/$workflowId/${execution.runId}/timeline",
+        )
+    }
+
+    /**
+     * Scenario 6: starts A, which starts B as its child. A's memo carries the request from the
+     * first event, so the browser can read it before A has run a workflow task.
+     */
+    private fun startStreamed(body: StartPayoutBody, payoutId: String, workflowId: String): StartPayoutResult {
+        val amount = Money(body.amountMinor, body.currency)
+        val stub = client.newWorkflowStub<PaymentRequestWorkflow> {
+            setWorkflowId(workflowId)
+            setTaskQueue(TASK_QUEUE)
+            setWorkflowIdReusePolicy(WorkflowIdReusePolicy.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE)
+            setStaticSummary("Payout $payoutId - streamed")
+            setStaticDetails(
+                "**$amount** over the ${body.rail} rail in ${body.region}.\n\n" +
+                    "Follows `${processingWorkflowIdFor(workflowId)}` through its Workflow Stream. " +
+                    "Behaviour `${body.behavior}` at `${body.step}`.",
+            )
+            setMemo(mapOf(MemoKeys.PAYMENT to PaymentMemo(payoutId, amount, body.rail, body.region)))
+        }
+        val request = StartStreamedPaymentRequest(
+            payoutId = payoutId,
+            customerId = body.customerId,
+            amount = amount,
+            rail = body.rail,
+            region = body.region,
+            scenarioName = body.scenario,
+        )
+        val execution = WorkflowClient.start(stub::requestPayment, request)
+        metrics.started.increment()
+        log.info("started {} ({})", workflowId, body.scenario)
+        return StartPayoutResult(
+            payoutId = payoutId,
+            workflowId = workflowId,
+            runId = execution.runId,
+            temporalUrl = "/namespaces/default/workflows/$workflowId/${execution.runId}/timeline",
+            streamWorkflowId = processingWorkflowIdFor(workflowId),
         )
     }
 
