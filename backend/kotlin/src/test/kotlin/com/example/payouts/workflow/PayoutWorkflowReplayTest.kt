@@ -130,7 +130,11 @@ class PayoutWorkflowReplayTest : PayoutWorkflowTestBase() {
         val replayEnv = newPayoutTestEnvironment()
         try {
             val worker = replayEnv.newWorker(TASK_QUEUE)
-            worker.registerWorkflowImplementationTypes(PayoutWorkflowImpl::class.java)
+            worker.registerWorkflowImplementationTypes(
+                PayoutWorkflowImpl::class.java,
+                PaymentRequestWorkflowImpl::class.java,
+                PaymentProcessingWorkflowImpl::class.java,
+            )
             val results = WorkflowReplayer.replayWorkflowExecutions(histories, false, worker)
             assertTrue(
                 !results.hadAnyError(),

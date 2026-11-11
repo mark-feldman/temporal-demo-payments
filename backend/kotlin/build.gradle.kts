@@ -1,8 +1,8 @@
 plugins {
-    kotlin("jvm") version "2.4.20"
-    kotlin("plugin.spring") version "2.4.20"
-    kotlin("plugin.serialization") version "2.4.20"
-    id("org.springframework.boot") version "3.5.10"
+    kotlin("jvm") version "2.4.21"
+    kotlin("plugin.spring") version "2.4.21"
+    kotlin("plugin.serialization") version "2.4.21"
+    id("org.springframework.boot") version "3.5.16"
     id("io.spring.dependency-management") version "1.1.7"
 }
 
@@ -23,6 +23,15 @@ sourceSets {
     }
 }
 
+// Spring Boot's dependency management pins the kotlinx JVM artifacts to its own versions
+// (1.6.3 and 1.8.1 for Boot 3.5), whatever the dependency declarations below say. These
+// properties set the versions it applies.
+extra["kotlin-serialization.version"] = "1.12.0"
+extra["kotlin-coroutines.version"] = "1.11.0"
+
+/** Every io.temporal artifact moves together; the contrib modules are versioned with the SDK. */
+val temporalVersion = "1.40.0"
+
 configurations["integrationTestImplementation"].extendsFrom(configurations["testImplementation"])
 configurations["integrationTestRuntimeOnly"].extendsFrom(configurations["testRuntimeOnly"])
 
@@ -31,16 +40,18 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("io.micrometer:micrometer-registry-prometheus")
 
-    implementation("io.temporal:temporal-spring-boot-starter:1.38.0")
-    implementation("io.temporal:temporal-kotlin:1.38.0")
+    implementation("io.temporal:temporal-spring-boot-starter:$temporalVersion")
+    implementation("io.temporal:temporal-kotlin:$temporalVersion")
+    // Experimental contrib module (Public Preview). Versioned with the SDK.
+    implementation("io.temporal:temporal-workflowstreams:$temporalVersion")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation("io.temporal:temporal-testing:1.38.0")
-    testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
+    testImplementation("io.temporal:temporal-testing:$temporalVersion")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:6.4.0")
     testImplementation(kotlin("test"))
     // Gradle 9 no longer puts the launcher on the test runtime classpath implicitly.
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -72,7 +83,7 @@ tasks.test {
     }
 }
 
-val integrationTest by tasks.registering(Test::class) {
+val integrationTest = tasks.register<Test>("integrationTest") {
     description = "Spring Boot tests against the in-memory Temporal test server."
     group = LifecycleBasePlugin.VERIFICATION_GROUP
     testClassesDirs = sourceSets["integrationTest"].output.classesDirs

@@ -198,7 +198,233 @@ const SCENARIOS = [
       'If polling is exhausted the payout compensates, flagged UNKNOWN_BANK_STATUS, since the instruction may already have settled.',
     ],
   },
+  {
+    id: 'streamed', name: 'Streamed payment (Workflow Streams)',
+    blurb: 'Workflow A starts workflow B, which runs seven stages and publishes each one to a Workflow Stream. This page and workflow A both subscribe; A receives every update as a signal.',
+    defaults: { scenario: 'streamed', amountMinor: 7500, behavior: 'PASS' },
+    streamed: true,
+    failures: [
+      { id: 'none',   label: 'No failure', cfg: {} },
+      { id: 'retry',  label: 'Funds transfer fails once, then retries', cfg: { behavior: 'FAIL_TRANSIENT', transientFailures: 1, step: 'transferFunds' } },
+      { id: 'reject', label: 'Verification rejects the payment', cfg: { behavior: 'FAIL_PERMANENT', step: 'verifyPayment' } },
+    ],
+    notes: [
+      'B publishes stage events from workflow code on the status topic; its activities publish progress and retry events from their own process.',
+      'The stream lives in B. Publishes are batched signals, subscriptions are long-poll updates: both show in B\'s history.',
+      'A relay activity in A subscribes to the status topic and signals A once per event, resuming from its last heartbeat offset after a crash.',
+      'A appends each update and checks its seq, then acknowledges B once it holds every one. B stays open until then.',
+      'Disconnect this page mid-run and reconnect: it resumes one past the last offset it saw, with nothing missed or repeated.',
+      'Stop the worker mid-run: lane A keeps showing A\'s memo, read with describe, which needs no worker.',
+    ],
+  },
 ]
+
+// ---------------------------------------------------------------------------
+// Scenario 6: Workflow Streams
+// ---------------------------------------------------------------------------
+const STAGES = [
+  ['VALIDATION', 'validation'], ['APPROVAL', 'approval'], ['FUNDS_TRANSFER', 'funds transfer'],
+  ['LEDGERING', 'ledgering'], ['VERIFICATION', 'verification'], ['CONFIRMATION', 'confirmation'],
+  ['SETTLEMENT', 'settlement'],
+]
+const stageLabel = id => STAGES.find(([k]) => k === id)?.[1] ?? id
+const STATE_BADGE = { STARTED: 'badge-running', PASSED: 'badge-success', FAILED: 'badge-danger' }
+const isStreamed = workflowId => workflowId?.split('-')[1] === 'streamed'
+const processingIdFor = workflowId => `${workflowId}-processing`
+
+// Subscribes to B's stream through the SSE bridge. Each event's id is its stream offset.
+// EventSource reconnects by itself after a network drop and sends that id back as
+// Last-Event-ID; Disconnect / Reconnect below does the same by hand with ?from=.
+function useWorkflowStream(streamId) {
+  const [items, setItems] = useState([])
+  const [conn, setConn] = useState('connecting')
+  const [closedStatus, setClosedStatus] = useState(null)
+  const source = useRef(null)
+  const last = useRef(-1)
+
+  const connect = useCallback(from => {
+    source.current?.close()
+    const es = new EventSource(`/demo-api/streams/${encodeURIComponent(streamId)}/events?from=${from}`)
+    source.current = es
+    setConn('connecting')
+    for (const topic of ['status', 'progress', 'retry']) {
+      es.addEventListener(topic, e => {
+        const offset = Number(e.lastEventId)
+        last.current = offset
+        setItems(prev => [...prev, { offset, topic, data: JSON.parse(e.data) }])
+        setConn('live')
+      })
+    }
+    // B does not exist yet: the bridge closes and EventSource retries after 500ms.
+    es.addEventListener('waiting', () => setConn('waiting'))
+    es.addEventListener('closed', e => {
+      setClosedStatus(JSON.parse(e.data).status)
+      setConn('closed')
+      es.close()
+    })
+    es.onopen = () => setConn(c => (c === 'connecting' ? 'live' : c))
+  }, [streamId])
+
+  useEffect(() => {
+    setItems([]); setClosedStatus(null); last.current = -1
+    connect(0)
+    return () => source.current?.close()
+  }, [streamId])
+
+  return {
+    items, conn, closedStatus,
+    lastOffset: () => last.current,
+    disconnect: () => { source.current?.close(); setConn('disconnected') },
+    reconnect: () => {
+      const from = last.current + 1
+      setItems(prev => [...prev, { marker: true, offset: from }])
+      connect(from)
+    },
+  }
+}
+
+// A memo, read with describe. Polled: a memo change has no push channel to the browser.
+function useWorkflowMemo(workflowId) {
+  const [memo, setMemo] = useState(null)
+  useEffect(() => {
+    setMemo(null)
+    const poll = () => api(`/payouts/${encodeURIComponent(workflowId)}/memo`).then(setMemo).catch(() => {})
+    poll(); const t = setInterval(poll, 1000); return () => clearInterval(t)
+  }, [workflowId])
+  return memo
+}
+
+const StageChips = ({ states, outcome }) => html`
+  <div class="flex flex-wrap gap-1">
+    ${STAGES.map(([id, label]) => html`
+      <span class="badge ${STATE_BADGE[states[id]] ?? 'badge-idle'}" title=${states[id] ?? 'not started'}>
+        ${states[id] === 'STARTED' && html`<span class="dot dot-pulse"></span>`}${label}
+      </span>`)}
+    ${outcome && html`
+      <span class="badge ${outcome === 'SETTLED' ? 'badge-success' : 'badge-danger'}">${outcome}</span>`}
+  </div>`
+
+// The latest state per stage, from status events (lane B) or memo entries (lane A).
+const statesFrom = events => {
+  const states = {}
+  let outcome = null
+  for (const e of events) {
+    if (e.stage) states[e.stage] = e.state
+    if (e.outcome) outcome = e.outcome
+  }
+  return { states, outcome }
+}
+
+function describeItem(item, superseded) {
+  const d = item.data
+  if (item.topic === 'status') {
+    return {
+      source: 'workflow B',
+      text: d.kind === 'OUTCOME' ? `seq ${d.seq} · OUTCOME ${d.outcome}` : `seq ${d.seq} · ${stageLabel(d.stage)} ${d.state}`,
+    }
+  }
+  const source = `${stageLabel(d.stage)} · attempt ${d.attempt}`
+  if (item.topic === 'retry') return { source, text: d.detail }
+  return { source, text: `${d.step}/${d.of} ${d.detail}`, struck: superseded.has(`${d.stage}:${d.attempt}`) }
+}
+
+function StreamPanel({ current, showInPane }) {
+  const streamId = current.streamWorkflowId ?? processingIdFor(current.workflowId)
+  const { items, conn, closedStatus, lastOffset, disconnect, reconnect } = useWorkflowStream(streamId)
+  const a = useWorkflowMemo(current.workflowId)
+  const b = useWorkflowMemo(streamId)
+
+  const events = items.filter(i => i.topic === 'status').map(i => i.data)
+  const laneB = statesFrom(events)
+  const laneA = statesFrom(a?.stages?.entries ?? [])
+  const latestProgress = [...items].reverse().find(i => i.topic === 'progress')?.data
+
+  // A retry event supersedes the progress of every earlier attempt at that stage.
+  const superseded = new Set()
+  for (const i of items.filter(i => i.topic === 'retry')) {
+    for (let n = 1; n < i.data.attempt; n++) superseded.add(`${i.data.stage}:${n}`)
+  }
+
+  const CONN = {
+    connecting: ['badge-idle', 'connecting'], waiting: ['badge-idle', 'waiting for B to start'],
+    live: ['badge-running', 'live'], disconnected: ['badge-warning', 'disconnected'],
+    closed: ['badge-idle', `B closed (${closedStatus})`],
+  }
+  const relay = a?.relay
+  const ack = b?.stream?.ackState
+
+  return html`
+    <div class="panel p-4 space-y-3">
+      <div class="flex items-center gap-2">
+        <span class="eyebrow" style="margin:0">Workflow Stream</span>
+        <span class="badge ${CONN[conn][0]}">
+          <span class="dot ${conn === 'live' ? 'dot-pulse' : ''}"></span>${CONN[conn][1]}
+        </span>
+      </div>
+
+      <div>
+        <div class="mono text-xs mb-1" style="color:var(--color-ink-muted)">
+          B · stream host · from the stream
+        </div>
+        <${StageChips} states=${laneB.states} outcome=${laneB.outcome} />
+        ${latestProgress && html`
+          <div class="mono text-xs mt-1" style="color:var(--color-ink-secondary)">
+            ${stageLabel(latestProgress.stage)}: ${latestProgress.detail} (${latestProgress.step}/${latestProgress.of})
+          </div>`}
+      </div>
+
+      <div>
+        <div class="mono text-xs mb-1" style="color:var(--color-ink-muted)">
+          A · initiator · from its memo (signals received)
+        </div>
+        <${StageChips} states=${laneA.states} outcome=${laneA.outcome} />
+        ${relay && html`
+          <div class="mono text-xs mt-1" style="color:var(--color-ink-secondary)">
+            ${relay.received} updates · ${relay.duplicatesDropped} duplicates dropped · ${relay.gaps} gaps
+            ${relay.ackSent ? ' · acknowledged to B' : ''}
+            ${a?.notification ? ` · customer: ${a.notification.message}` : ''}
+          </div>`}
+      </div>
+
+      <div class="mono text-xs" style="color:var(--color-ink-muted)">
+        page at offset ${lastOffset()} · relay at offset ${relay?.lastOffset ?? '—'} ·
+        B published ${b?.stream?.statusEventsPublished ?? 0} status events${ack && ack !== 'NOT_YET' ? ` · ack ${ack}` : ''}
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        ${conn === 'disconnected'
+          ? html`<button class="btn btn-secondary" onClick=${reconnect}>Reconnect from offset ${lastOffset() + 1}</button>`
+          : html`<button class="btn btn-secondary" disabled=${conn === 'closed'} onClick=${disconnect}>Disconnect page</button>`}
+        <button class="btn btn-ghost" onClick=${() => showInPane(workflowUrl(current.workflowId, current.runId))}>Workflow: A</button>
+        <button class="btn btn-ghost" onClick=${() => showInPane(workflowUrl(streamId))}>Workflow: B</button>
+      </div>
+
+      <div class="mono text-xs overflow-auto" style="max-height:260px;border-top:1px solid var(--color-line-subtle)">
+        <table class="w-full">
+          <thead style="color:var(--color-ink-muted)">
+            <tr><th class="text-left pr-2">offset</th><th class="text-left pr-2">topic</th>
+                <th class="text-left pr-2">source</th><th class="text-left">event</th></tr>
+          </thead>
+          <tbody>
+            ${[...items].reverse().slice(0, 120).map(i => {
+              if (i.marker) return html`
+                <tr><td colspan="4" style="color:var(--color-state-warning)">
+                  reconnected · resuming from offset ${i.offset}
+                </td></tr>`
+              const { source, text, struck } = describeItem(i, superseded)
+              const colour = i.topic === 'retry' ? 'var(--color-state-warning)'
+                : i.topic === 'status' ? 'var(--color-ink-primary)' : 'var(--color-ink-secondary)'
+              return html`
+                <tr style="color:${colour};${struck ? 'text-decoration:line-through;opacity:.6' : ''}">
+                  <td class="pr-2">${i.offset}</td><td class="pr-2">${i.topic}</td>
+                  <td class="pr-2">${source}</td><td>${text}</td>
+                </tr>`
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>`
+}
 
 // ---------------------------------------------------------------------------
 function StatusCard({ status, error }) {
@@ -231,7 +457,7 @@ function StatusCard({ status, error }) {
     </div>`
 }
 
-function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
+function ScenarioPanel({ scenario, onStarted, current, status, statusError, showInPane }) {
   // The amount is derived from the selected scenario, with edits kept per scenario, so
   // switching scenarios always shows that scenario's amount. Preact diffs this component by
   // type and position and it has no key, so the instance is reused across a switch and a
@@ -242,6 +468,7 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [pollOutcome, setPollOutcome] = useState('completed')
+  const [failure, setFailure] = useState('none')
 
   const start = async () => {
     setBusy(true); setNote('')
@@ -251,6 +478,7 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
         body: JSON.stringify({
           ...scenario.defaults,
           ...(scenario.pollOutcomes?.find(o => o.id === pollOutcome)?.cfg ?? {}),
+          ...(scenario.failures?.find(o => o.id === failure)?.cfg ?? {}),
           amountMinor: Number(amount),
         }),
       })
@@ -283,7 +511,7 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
         <!-- Rail, region and currency come from the server defaults; none of them changes a
              branch, a timeout or an outcome. -->
         <!-- Under 10000 minor the rail answers inline and there is no callback to signal, so
-             the Bank buttons below do not appear. Every scenario default sits above that. -->
+             the Bank buttons below do not appear. Scenarios 1-3 start below it; 4 and 5 above. -->
         <${Field} label="Amount (minor units, USD) — under 10000 settles inline, no callback">
           <input class="input" type="number" value=${amount} onInput=${e => setAmount(e.target.value)} />
         <//>
@@ -293,12 +521,21 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
               ${scenario.pollOutcomes.map(o => html`<option value=${o.id}>${o.label}</option>`)}
             </select>
           <//>`}
+        ${scenario.failures && html`
+          <${Field} label="Failure to inject">
+            <select class="input" value=${failure} onChange=${e => setFailure(e.target.value)}>
+              ${scenario.failures.map(o => html`<option value=${o.id}>${o.label}</option>`)}
+            </select>
+          <//>`}
         <button class="btn btn-primary w-full" disabled=${busy} onClick=${start}>
           ${busy ? 'Starting…' : 'Start payout'}
         </button>
       </div>
 
-      ${current && html`
+      ${current && isStreamed(current.workflowId) && html`
+        <${StreamPanel} current=${current} showInPane=${showInPane} />`}
+
+      ${current && !isStreamed(current.workflowId) && html`
         <div class="panel p-4 space-y-2">
           <${Eyebrow}>Interact with this execution<//>
           <!-- Controls follow the live status rather than the scenario, so a signal button is
@@ -321,7 +558,7 @@ function ScenarioPanel({ scenario, onStarted, current, status, statusError }) {
           ${note && html`<div class="text-xs" style="color:var(--color-state-warning)">${note}</div>`}
         </div>`}
 
-      <${StatusCard} status=${status} error=${statusError} />
+      ${!isStreamed(current?.workflowId) && html`<${StatusCard} status=${status} error=${statusError} />`}
       <${WorkerControl} />
       <${Notes} items=${scenario.notes} />
     </div>`
@@ -433,7 +670,7 @@ function App() {
   const [current, setCurrent] = useState(() => {
     const q = new URLSearchParams(location.search)
     const id = q.get('payout')
-    return id ? { workflowId: id, temporalUrl: workflowUrl(id, q.get('run')) } : null
+    return id ? { workflowId: id, runId: q.get('run'), temporalUrl: workflowUrl(id, q.get('run')) } : null
   })
   const [status, setStatus] = useState(null)
   const [statusError, setStatusError] = useState(false)
@@ -448,7 +685,8 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!current) return
+    // Scenario 6 has no PayoutWorkflow to query; StreamPanel reads its memos instead.
+    if (!current || isStreamed(current.workflowId)) return
     const poll = () => api(`/payouts/${current.workflowId}/status`)
       .then(s => { setStatus(s); setStatusError(false) })
       .catch(() => setStatusError(true))
@@ -510,7 +748,8 @@ function App() {
                         onClick=${() => showInPane(v.path)}>${v.label}</button>`)}
             </div>
             <${ScenarioPanel} scenario=${scenario} onStarted=${onStarted}
-                              current=${current} status=${status} statusError=${statusError} />
+                              current=${current} status=${status} statusError=${statusError}
+                              showInPane=${showInPane} />
           </aside>
           <section class="flex-1 min-w-0">
             <iframe ref=${iframeRef} class="w-full h-full border-0"

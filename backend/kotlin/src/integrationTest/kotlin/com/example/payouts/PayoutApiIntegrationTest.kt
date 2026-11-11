@@ -9,7 +9,9 @@ import com.example.payouts.model.workflow.BankStatusUpdateRequest
 import com.example.payouts.scenario.Behavior
 import com.example.payouts.support.BusinessStatusListener
 import com.example.payouts.support.DEMO_SEARCH_ATTRIBUTES
+import com.example.payouts.support.WorkflowStartListener
 import com.example.payouts.worker.WorkerSupervisor
+import com.example.payouts.workflow.processingWorkflowIdFor
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.core.instrument.MeterRegistry
 import io.temporal.testing.TestWorkflowEnvironment
@@ -28,6 +30,11 @@ import org.springframework.context.annotation.Bean
 import org.springframework.http.HttpStatus
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.bean.override.mockito.MockitoBean
+import java.net.URI
+import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -73,6 +80,9 @@ class PayoutApiIntegrationTest {
     private lateinit var statusEvents: BusinessStatusListener
 
     @Autowired
+    private lateinit var starts: WorkflowStartListener
+
+    @Autowired
     private lateinit var meters: MeterRegistry
 
     @LocalServerPort
@@ -89,6 +99,10 @@ class PayoutApiIntegrationTest {
     class StatusEventsConfiguration {
         @Bean
         fun businessStatusListener() = BusinessStatusListener()
+
+        /** Tells scenario 6's test when B, and so its stream, exists. */
+        @Bean
+        fun workflowStartListener() = WorkflowStartListener()
     }
 
     /**
@@ -407,6 +421,120 @@ class PayoutApiIntegrationTest {
 
         awaitStatus(started.workflowId, BusinessStatus.AWAITING_BANK_CONFIRMATION)
         signalBank(started.workflowId, BankStatus.COMPLETED)
+    }
+
+    // ---- scenario 6: the Workflow Stream, over SSE ----
+
+    @Test
+    fun `the SSE bridge resumes from Last-Event-ID with nothing missed or repeated`() {
+        val started = start(StartPayoutBody(scenario = "streamed", amountMinor = 7_500))
+        val streamId = requireNotNull(started.streamWorkflowId) { "a streamed start names its stream workflow" }
+        assertEquals("${started.workflowId}-processing", streamId)
+        starts.await(streamId)
+
+        // Drop the connection after three items, then reconnect the way EventSource does.
+        val first = readSse(streamId) { events -> events.count { it.id != null } == 3 }
+        val lastSeen = first.mapNotNull { it.id }.last()
+        val resumed = readSse(streamId, lastEventId = lastSeen) { events ->
+            events.any { it.name == "status" && "OUTCOME" in it.data }
+        }
+
+        assertEquals(lastSeen + 1, resumed.firstNotNullOf { it.id }, "the resumed stream starts one past Last-Event-ID")
+        // Offsets are global across topics and dense, so the two connections together cover
+        // every offset once.
+        val ids = (first + resumed).mapNotNull { it.id }
+        assertEquals((0L..ids.last()).toList(), ids)
+        val seqs = (first + resumed).filter { it.name == "status" }.map { mapper.readTree(it.data)["seq"].asInt() }
+        assertEquals((0..14).toList(), seqs)
+
+        // A closes only after B has, so both are done once A reaches COMPLETED.
+        statusEvents.await(started.workflowId, BusinessStatus.COMPLETED, timeout = Duration.ofSeconds(90))
+        val memo = mapper.readTree(rest.getForObject(url("/payouts/${started.workflowId}/memo"), String::class.java))
+        assertEquals(15, memo["relay"]["received"].asInt())
+        assertEquals(0, memo["relay"]["gaps"].asInt())
+        assertEquals("SETTLED", memo["outcome"]["outcome"].asText())
+
+        // B's log is gone with it; the bridge says so instead of erroring.
+        val afterClose = readSse(streamId) { false }
+        assertEquals(listOf("closed"), afterClose.map { it.name })
+        assertContains(afterClose.single().data, "COMPLETED")
+    }
+
+    @Test
+    fun `the SSE bridge resumes from the from parameter, as the page's Reconnect button does`() {
+        val started = start(StartPayoutBody(scenario = "streamed", amountMinor = 7_500))
+        val streamId = requireNotNull(started.streamWorkflowId)
+        starts.await(streamId)
+
+        val first = readSse(streamId) { events -> events.count { it.id != null } == 3 }
+        val from = first.mapNotNull { it.id }.last() + 1
+        val resumed = readSse(streamId, from = from) { events -> events.any { it.id != null } }
+
+        assertEquals(from, resumed.firstNotNullOf { it.id })
+        statusEvents.await(started.workflowId, BusinessStatus.COMPLETED, timeout = Duration.ofSeconds(90))
+    }
+
+    @Test
+    fun `the SSE bridge tells the page to wait while A runs and B does not exist yet`() {
+        // Any running workflow will do as A: the bridge checks A only when B is missing.
+        val started = start(StartPayoutBody(scenario = "it-sse-waiting", amountMinor = 25_000))
+        awaitStatus(started.workflowId, BusinessStatus.AWAITING_BANK_CONFIRMATION)
+
+        val events = readSse(processingWorkflowIdFor(started.workflowId)) { false }
+
+        assertEquals(listOf("waiting"), events.map { it.name })
+        signalBank(started.workflowId, BankStatus.COMPLETED)
+        awaitStatus(started.workflowId, BusinessStatus.COMPLETED)
+    }
+
+    @Test
+    fun `the SSE bridge reports a stream whose workflow was never started as closed`() {
+        // A quote in the id broke the JSON the bridge used to build by hand.
+        val streamId = processingWorkflowIdFor("payout-streamed-never\"started")
+
+        val events = readSse(streamId) { false }
+
+        assertEquals(listOf("closed"), events.map { it.name })
+        val data = mapper.readTree(events.single().data)
+        assertEquals(streamId, data["workflowId"].asText())
+        assertEquals("NOT_STARTED", data["status"].asText())
+    }
+
+    private data class SseEvent(val id: Long?, val name: String, val data: String)
+
+    /** Reads `/streams/{id}/events` until [enough] is satisfied or the server closes the response. */
+    private fun readSse(
+        streamId: String,
+        lastEventId: Long? = null,
+        from: Long? = null,
+        enough: (List<SseEvent>) -> Boolean,
+    ): List<SseEvent> {
+        val query = from?.let { "?from=$it" }.orEmpty()
+        val request = HttpRequest.newBuilder(URI.create(url("/streams/${URLEncoder.encode(streamId, Charsets.UTF_8)}/events$query")))
+            .header("Accept", "text/event-stream")
+            .apply { lastEventId?.let { header("Last-Event-ID", it.toString()) } }
+            .build()
+        val events = mutableListOf<SseEvent>()
+        HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofLines()).body().use { lines ->
+            var id: Long? = null
+            var name = "message"
+            val data = StringBuilder()
+            for (line in lines.iterator()) {
+                when {
+                    line.isEmpty() -> {
+                        if (data.isNotEmpty()) {
+                            events += SseEvent(id, name, data.toString())
+                            if (enough(events)) break
+                        }
+                        id = null; name = "message"; data.clear()
+                    }
+                    line.startsWith("id:") -> id = line.substringAfter("id:").trim().toLongOrNull()
+                    line.startsWith("event:") -> name = line.substringAfter("event:").trim()
+                    line.startsWith("data:") -> data.append(line.substringAfter("data:"))
+                }
+            }
+        }
+        return events
     }
 
     private companion object {

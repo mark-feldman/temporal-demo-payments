@@ -6,6 +6,14 @@ spring:
     # interval; without this the starter's MetricsScopeAutoConfiguration bean of the same
     # name collides and the context fails to start.
     allow-bean-definition-overriding: true
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          # The static assets are edited in place with no fingerprinted names. Without a
+          # Cache-Control header browsers cache them heuristically off Last-Modified and keep
+          # serving a stale app.js; no-cache makes them revalidate (a 304 when unchanged).
+          no-cache: true
   temporal:
     connection:
       # NOT `local`. The starter's ServiceStubsTemplate special-cases that value and calls

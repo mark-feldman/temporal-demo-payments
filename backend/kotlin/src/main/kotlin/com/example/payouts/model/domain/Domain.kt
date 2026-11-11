@@ -47,6 +47,29 @@ enum class FailureCategory {
     UNKNOWN_BANK_STATUS,
 }
 
+/** The seven stages of the streamed payment (scenario 6), in the order they run. */
+enum class PaymentStage(val label: String) {
+    VALIDATION("validation"),
+    APPROVAL("approval"),
+    FUNDS_TRANSFER("funds transfer"),
+    LEDGERING("ledgering"),
+    VERIFICATION("verification"),
+    CONFIRMATION("confirmation"),
+    SETTLEMENT("settlement"),
+    ;
+
+    /** 1-based, for "stage 3/7". */
+    val number: Int get() = ordinal + 1
+
+    companion object {
+        val COUNT = entries.size
+    }
+}
+
+enum class StageState { STARTED, PASSED, FAILED }
+
+enum class PaymentOutcome { SETTLED, FAILED }
+
 /** Money is always integer minor units. Never a float, never a BigDecimal on the wire. */
 @Serializable
 data class Money(val amountMinor: Long, val currency: String) {
@@ -73,8 +96,8 @@ data class Money(val amountMinor: Long, val currency: String) {
  * Read from the workflow's input, which is recorded in WorkflowExecutionStarted and so replays
  * identically. Reading it from `ScenarioStore` instead would be a non-determinism bug.
  *
- * The demo's manual scenarios all start above this threshold, so they keep their bank wait;
- * `DemoScenarioDefaultsTest` asserts that.
+ * Manual scenarios 1-3 start below this threshold and settle inline; 4 and 5 start above it, so
+ * they keep their bank wait. `DemoScenarioDefaultsTest` asserts that.
  */
 object SettlementThresholds {
     const val SYNC_BELOW_MINOR = 10_000L // $100.00

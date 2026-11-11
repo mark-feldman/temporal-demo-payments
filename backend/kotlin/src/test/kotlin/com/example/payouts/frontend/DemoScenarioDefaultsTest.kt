@@ -1,5 +1,12 @@
 package com.example.payouts.frontend
 
+import com.example.payouts.activities.BankActivities
+import com.example.payouts.activities.FxActivities
+import com.example.payouts.activities.LedgerActivities
+import com.example.payouts.activities.NotificationActivities
+import com.example.payouts.activities.PaymentStageActivities
+import com.example.payouts.activities.RailActivities
+import com.example.payouts.activities.ValidationActivities
 import com.example.payouts.api.StartPayoutBody
 import com.example.payouts.model.domain.ApprovalThresholds
 import com.example.payouts.model.domain.ApprovalTier
@@ -8,6 +15,7 @@ import com.example.payouts.model.domain.SettlementThresholds
 import com.example.payouts.scenario.Behavior
 import com.example.payouts.support.repoFile
 import com.example.payouts.workflow.DEMO_MIN_ATTEMPTS
+import com.example.payouts.workflow.STAGE_MAX_ATTEMPTS
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import java.nio.file.Path
@@ -41,7 +49,8 @@ class DemoScenarioDefaultsTest {
 
     /**
      * One request body the UI can post: a scenario's `defaults`, or those defaults with one of
-     * scenario 5's `pollOutcomes` merged over them. Values stay as source text.
+     * scenario 5's `pollOutcomes` or scenario 6's `failures` merged over them. Values stay as
+     * source text.
      */
     private data class PostedConfig(
         val scenarioId: String,
@@ -59,9 +68,9 @@ class DemoScenarioDefaultsTest {
         // Anchored, so a rename or an added scenario fails here rather than reducing the
         // number of assertions.
         assertEquals(
-            listOf("successful", "transient", "permanent", "approval", "unknown"),
+            listOf("successful", "transient", "permanent", "approval", "unknown", "streamed"),
             scenarios.map { it.scenarioId },
-            "the demo ships five scenarios in this order -- the buttons are labelled 1-5 by index",
+            "the demo ships six scenarios in this order -- the buttons are labelled 1-6 by index",
         )
 
         val approval = scenarios.single { it.scenarioId == "approval" }
@@ -90,11 +99,12 @@ class DemoScenarioDefaultsTest {
     }
 
     @Test
-    fun `the first three scenarios settle inline, and the last two wait for the bank`() {
+    fun `the first three scenarios settle inline, and the next two wait for the bank`() {
         // Which side of SYNC_BELOW_MINOR a scenario starts on decides whether it needs a hand
         // on the Bank buttons. Scenarios 1-3 run start to finish unattended; 4 and 5 are about
-        // the durable wait itself, so they have to stay above it.
-        val (inline, awaiting) = defaultsByScenario().partition {
+        // the durable wait itself, so they have to stay above it. Scenario 6 runs its own two
+        // workflows, which have no bank wait, so the threshold does not apply to it.
+        val (inline, awaiting) = defaultsByScenario().filter { it.scenarioId != "streamed" }.partition {
             it.scenarioId in setOf("successful", "transient", "permanent")
         }
 
@@ -166,14 +176,46 @@ class DemoScenarioDefaultsTest {
     }
 
     @Test
+    fun `every step the UI injects a failure into is an activity the scenario runs`() {
+        // ScenarioStore.maybeFail matches the step by name and does nothing otherwise, so a
+        // misspelt step runs the scenario with no failure and no error.
+        val payoutSteps = activityMethods(
+            ValidationActivities::class.java, LedgerActivities::class.java, FxActivities::class.java,
+            RailActivities::class.java, BankActivities::class.java, NotificationActivities::class.java,
+        )
+        val streamedSteps = activityMethods(PaymentStageActivities::class.java)
+
+        val injected = postedConfigs().filter { it.values["step"] != null }
+        assertTrue(injected.any { it.scenarioId == "streamed" }, "scenario 6's failures inject into a step")
+        injected.forEach { config ->
+            val step = config.values.getValue("step")
+            val steps = if (config.scenarioId == "streamed") streamedSteps else payoutSteps
+            assertTrue(step in steps, "$config injects into step='$step', which is not an activity it runs: $steps")
+        }
+    }
+
+    private fun activityMethods(vararg interfaces: Class<*>): Set<String> =
+        interfaces.flatMap { type -> type.declaredMethods.map { it.name } }.toSet()
+
+    @Test
     fun `the injected failure counts stay inside the retry budget`() {
         // Injection counts are "fail this many attempts, then succeed", so resolution lands on
-        // attempt n+1 and needs n+1 <= the smallest cap the RNG can draw.
+        // attempt n+1 and needs n+1 <= the smallest cap the RNG can draw. Scenario 6's stages
+        // run in B, under its own fixed cap.
         postedConfigs()
             .filterNot { it.values["pollingNeverResolves"] == "true" }
             .forEach { config ->
                 listOf("transientFailures", "pollsBeforeResolution").forEach { key ->
                     val count = config.long(key) ?: return@forEach
+                    if (config.scenarioId == "streamed") {
+                        assertTrue(
+                            count < STAGE_MAX_ATTEMPTS,
+                            "$config injects $key=$count, which resolves on attempt ${count + 1}. " +
+                                "B allows $STAGE_MAX_ATTEMPTS attempts per stage, so the stage " +
+                                "fails and B compensates instead of recovering",
+                        )
+                        return@forEach
+                    }
                     assertTrue(
                         count < DEMO_MIN_ATTEMPTS,
                         "$config injects $key=$count, which resolves on attempt ${count + 1}. " +
@@ -202,9 +244,9 @@ class DemoScenarioDefaultsTest {
     // ---- parsing ----
 
     /**
-     * Scenario entries open `id: 'x', name: 'Y'` on one line. The `pollOutcomes` entries
-     * nested inside scenario 5 also start with `id:`, so the following key is what
-     * distinguishes a scenario from an option within one.
+     * Scenario entries open `id: 'x', name: 'Y'` on one line. The option entries nested inside
+     * scenarios 5 and 6 (`pollOutcomes`, `failures`) also start with `id:`, so the following
+     * key is what distinguishes a scenario from an option within one.
      */
     private val scenarioHeader = Regex("""id:\s*'([\w-]+)',\s*name:""")
     private val pollOutcome = Regex("""id:\s*'([\w-]+)',\s*label:[^{]*cfg:\s*\{([^}]*)}""")
@@ -216,8 +258,8 @@ class DemoScenarioDefaultsTest {
         postedConfigs().filter { it.label == "defaults" }
 
     /**
-     * Every body the UI can post: each scenario's defaults, plus one per `pollOutcomes` entry
-     * with its `cfg` merged over those defaults, as `start()` in `app.js` does.
+     * Every body the UI can post: each scenario's defaults, plus one per option entry with its
+     * `cfg` merged over those defaults, as `start()` in `app.js` does.
      */
     private fun postedConfigs(): List<PostedConfig> {
         val block = scenariosBlock()

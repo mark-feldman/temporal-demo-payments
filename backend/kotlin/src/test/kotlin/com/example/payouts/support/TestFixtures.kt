@@ -155,6 +155,8 @@ data class ActivityCall(
     val idempotencyKey: String = "",
     /** Set for markPayout: the terminal outcome written to the ledger. */
     val outcome: String = "",
+    /** Set for notify: the message sent. */
+    val message: String = "",
 )
 
 /**
@@ -196,10 +198,11 @@ class RecordingActivities(
         payoutId: String,
         idempotencyKey: String = "",
         outcome: String = "",
+        message: String = "",
         result: (Int) -> T,
     ): T {
         val attempt = Activity.getExecutionContext().info.attempt
-        calls += ActivityCall(step, payoutId, attempt, idempotencyKey, outcome)
+        calls += ActivityCall(step, payoutId, attempt, idempotencyKey, outcome, message)
         scenarios.maybeFail(step, payoutId, attempt)
         return result(attempt)
     }
@@ -278,7 +281,7 @@ class RecordingActivities(
         }
 
     override fun notify(request: NotifyRequest) =
-        run("notify", request.payoutId) { NotifyResponse(sent = true) }
+        run("notify", request.payoutId, message = request.message) { NotifyResponse(sent = true) }
 
     private companion object {
         val FX_RATES = mapOf("USD" to 1.0, "SGD" to 0.74, "AUD" to 0.66, "CNY" to 0.14, "EUR" to 1.08)

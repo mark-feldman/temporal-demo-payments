@@ -354,7 +354,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
                 failure = FailureCategory.APPROVAL_TIMEOUT
                 false
             }
-            decision?.approved == true -> {
+            decision.approved -> {
                 advance(BusinessStatus.APPROVED, "Approved by ${decision.approver}")
                 true
             }
@@ -531,7 +531,7 @@ class PayoutWorkflowImpl : PayoutWorkflow {
         )
     }
 
-    private fun approvalTimeoutSeconds() = Workflow.getInfo().searchAttributes.let { 30L }
+    private fun approvalTimeoutSeconds() = 30L
 
     private fun bankCallbackTimeoutSeconds() = 45L
 

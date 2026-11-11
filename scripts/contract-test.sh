@@ -136,6 +136,26 @@ COHERENT=no
   && ok "9 a low-value payout settles inline, with no callback ($S)" \
   || bad "9 inline settlement" "inline=$INLINE coherent=$COHERENT state=$S category=$FC"
 
+# 10 -- scenario 6: B streams its status, and A receives every update as a signal
+memo() { curl -s "$BASE/payouts/$1/memo"; }
+R=$(start '{"scenario":"streamed","amountMinor":7500}')
+W=$(echo "$R" | jqv "['workflowId']"); SW=$(echo "$R" | jqv "['streamWorkflowId']")
+for _ in $(seq 1 40); do [[ "$(memo "$SW" | jqv "['executionStatus']")" == "RUNNING" ]] && break; sleep 0.25; done
+# Read B's stream over SSE from offset 0 up to the OUTCOME event.
+EV=$(curl -sN --max-time 60 "$BASE/streams/$SW/events" | sed '/"OUTCOME"/q')
+IDS=$(echo "$EV" | sed -n 's/^id://p' | tr '\n' ' ' | sed 's/ $//')
+N=$(echo "$EV" | grep -c '^event:status')
+LAST=${IDS##* }
+[[ "$N" == "15" && "$IDS" == "$(echo $(seq 0 "$LAST"))" ]] \
+  && ok "10a the stream delivers 15 status events, offsets 0-$LAST with no gaps" \
+  || bad "10a stream over SSE" "status=$N ids=$IDS"
+for _ in $(seq 1 120); do [[ "$(memo "$W" | jqv "['outcome']['outcome']")" == "SETTLED" ]] && break; sleep 0.5; done
+M=$(memo "$W")
+[[ "$(echo "$M" | jqv "['relay']['received']")" == "15" && "$(echo "$M" | jqv "['relay']['gaps']")" == "0" \
+   && "$(echo "$M" | jqv "['relay']['ackSent']")" == "True" ]] \
+  && ok "10b A received every status update as a signal and acknowledged B" \
+  || bad "10b relay into A" "$(echo "$M" | jqv "['relay']")"
+
 # 8 -- metrics endpoint
 M=$(curl -s "$BASE/actuator/prometheus")
 [[ "$M" == *payout_workflows_started_total* && "$M" == *temporal_* ]] \

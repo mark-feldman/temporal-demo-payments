@@ -1,10 +1,11 @@
 # Payout orchestration — a Temporal demo
 
-A local, runnable payout orchestration demo built on Temporal. One payout workflow, five
-scenarios, a load simulator, and live worker + server metrics, all behind a single URL, so the
-workflow controls and the Temporal UI sit side by side in one window.
+A local, runnable payout orchestration demo built on Temporal. One payout workflow with five
+scenarios, a sixth scenario built on Workflow Streams, a load simulator, and live worker +
+server metrics, all behind a single URL, so the workflow controls and the Temporal UI sit side
+by side in one window.
 
-**Backend:** Kotlin · Spring Boot · Temporal Java SDK 1.38.0
+**Backend:** Kotlin · Spring Boot · Temporal Java SDK 1.40.0
 **Frontend:** Preact + htm, no build step for the JS · Tailwind v4 for the CSS
 
 ---
@@ -83,7 +84,7 @@ resolved, and `make start` refuses to run on the wrong CLI or without a JDK 21.
 
 ## What it shows
 
-Five scenarios on the **Demo** tab, each with its own controls and explanatory notes:
+Six scenarios on the **Demo** tab, each with its own controls and explanatory notes:
 
 1. **Successful payout** — the baseline. Validate → reserve → FX → select rail → submit →
    confirm → complete. Rail, region and currency are fixed server-side rather than exposed as
@@ -104,6 +105,12 @@ Five scenarios on the **Demo** tab, each with its own controls and explanatory n
 
    The polls show up live on the pending-activity record. Afterwards only the final attempt
    count remains, since retries write no per-attempt history event.
+6. **Streamed payment (Workflow Streams)** — workflow A starts workflow B as a child. B runs
+   seven stages (validation, approval, funds transfer, ledgering, verification, confirmation,
+   settlement) and publishes each one to a Workflow Stream it hosts. The page subscribes over
+   server-sent events; A subscribes through a relay activity and receives every status update
+   as a signal. A failure selector injects a retried funds transfer or a rejected verification.
+   See [Scenario 6: Workflow Streams](#scenario-6-workflow-streams).
 
 The **Metrics** tab runs the load simulator and embeds the Grafana dashboard, so traffic can
 be started and observed without leaving the tab.
@@ -129,8 +136,8 @@ thing again: Worker Deployments, i.e. versioning.
 
 ## The workflow, step by step
 
-`PayoutWorkflow` is the only workflow in the repo, and every scenario above is a path through
-it.
+Scenarios 1-5 are paths through `PayoutWorkflow`. Scenario 6 has two workflows of its own,
+covered in [the next section](#scenario-6-workflow-streams).
 
 ### The happy path
 
@@ -253,6 +260,145 @@ Three things the diagram does not show:
 - Both durable waits use an explicit `Workflow.newTimer` in a cancellation scope rather than
   `Workflow.await(timeout, cond)`, and the signal handlers ignore arrivals after the deadline.
 
+## Scenario 6: Workflow Streams
+
+Workflow Streams is in Public Preview. The demo uses the experimental
+`io.temporal:temporal-workflowstreams` module, versioned with the SDK at 1.40.0.
+
+```mermaid
+flowchart LR
+    page["Browser<br/>EventSource"]
+    sse["StreamController<br/>/demo-api/streams/{id}/events"]
+    subgraph A["PaymentRequestWorkflow (A)"]
+        relay["relayStageUpdates<br/>activity"]
+        handler["onStageUpdate<br/>signal handler"]
+    end
+    subgraph B["PaymentProcessingWorkflow (B)"]
+        stream[("Workflow Stream<br/>status · progress · retry")]
+        stages["7 stage activities"]
+    end
+    A -- "child workflow" --> B
+    B -- "status, from workflow code" --> stream
+    stages -- "progress, retry" --> stream
+    sse -- "subscribe, all topics" --> stream
+    sse -- "SSE, id = offset" --> page
+    relay -- "subscribe, status only" --> stream
+    relay -- "one signal per event" --> handler
+    handler -. "statusAcknowledged" .-> B
+```
+
+**B, `PaymentProcessingWorkflow`, hosts the stream.** It creates the stream in its
+`@WorkflowInit` constructor, so a subscriber that attaches straight away is accepted. For each
+stage it publishes `STARTED`, runs the stage activity, then publishes `PASSED` or `FAILED`, all
+on the `status` topic and all from workflow code. Every status event carries a `seq` from 0
+with no gaps; the last one is an `OUTCOME` event. The stage activities publish to `progress`
+from their own process with `WorkflowStreamClient.fromActivity()`, and on attempt 2 or later they
+open with a force-flushed event on `retry`. Funds transfer and ledgering register reversals, so
+a rejected verification compensates both.
+
+**A, `PaymentRequestWorkflow`, starts B and follows it.** It waits for the child to start, then
+runs `relayStageUpdates`, a long-running activity that subscribes to B's `status` topic and
+sends A one `onStageUpdate` signal per event. The handler appends each update and checks its
+`seq`: an older one is a re-delivery and is dropped, a skipped one is counted as a gap. A
+notifies the customer as soon as it receives confirmation passing or a failure, or from B's
+result if B finishes first. If settlement then fails, A sends a correction once B returns. A
+signals B `statusAcknowledged` once it holds every `seq` up to the outcome. B stays open until then, for up to 15 minutes, because the log
+lives in B's memory and goes when B closes. Before closing, B releases any poll still waiting,
+such as an open page's, and the relay stops polling as soon as it has relayed the `OUTCOME`. A's
+result comes from the child's result, not from the signals.
+
+**Cancelling.** Cancelling A cancels B, its child. B's parent close policy is `REQUEST_CANCEL`,
+so terminating A cancels B too. What a cancelled B does depends on when the cancel arrives.
+Mid-payment, it fails the stage it is in, reverses what it had done and publishes a `FAILED`
+outcome with reason `cancelled`. While it waits for the acknowledgement, it keeps the outcome it
+had reached, `SETTLED` included, and reverses nothing. Either way it stops waiting, records the
+ack state `CANCELLED`, hands waiting polls the items they have not had and closes as CANCELED.
+A Java workflow with a cancel request closes that way whatever its method returns, so B has no
+result for A; it signals its outcome to A with `onProcessingCancelled` before it closes. A
+cancelled A still waits for B, notifies the customer and records the outcome in its memo, then
+closes as CANCELED.
+
+**The relay resumes from its heartbeat.** It heartbeats the last offset it signalled every 2s,
+with a 10s heartbeat timeout, a 5-minute start-to-close per attempt and a 10-minute
+schedule-to-close. The SDK sends heartbeats at most every 8s (80% of the timeout), and the
+relay signals before it records the offset, so a new attempt can re-send a few events. A drops
+those by `seq`. Stopping the only worker 6s into a run re-sends every event delivered so far,
+because the opening heartbeat is the only one the server has by then.
+
+**The page.** `StreamController` bridges a subscription to server-sent events and uses the
+stream offset as the event id. EventSource reconnects on its own and sends that id back as
+`Last-Event-ID`; the page's **Disconnect** / **Reconnect** buttons pass `?from=` instead, since
+EventSource cannot set the header. Lane B renders from the stream. Lane A renders from A's memo,
+read with `describe`, which needs no worker, so it still answers while every worker is down.
+**Workflow: A** and **Workflow: B** point the pane at each workflow.
+
+**Memo and current details.** Each workflow updates its memo (`progress`, `stages`, `stream` or
+`relay`, `notification`, `outcome`) and its current details at every transition, from one
+function. Each memo upsert is a `WorkflowPropertiesModified` event: 20 on A and 18 on B in a run
+that settles. Current details add no event.
+
+**What shows in Temporal UI.** B's history has `__temporal_workflow_stream_publish` signals, one
+per batch an activity flushed, and a `__temporal_workflow_stream_poll` update per subscriber
+poll. Status events published from workflow code add no event. Stream items are base64 inside
+those payloads; A's `onStageUpdate` signals are readable JSON.
+
+**Stream items need the converter passed in.** The stream encodes each item with converters it is
+handed explicitly, since workflow code cannot reach the worker's data converter. `StreamCodec`
+passes `KotlinxJsonPayloadConverter` to every publisher and subscriber.
+
+**Batch interval 200ms**, down from the 2s default, so the page keeps up.
+
+### What streaming costs on Temporal Cloud
+
+Every Workflow Streams operation that reaches the server is billed as an
+[Action](https://docs.temporal.io/evaluate/cloud/actions). In this demo that is each subscriber
+poll, each batch a stage activity flushes, each status event the relay signals into A, and each
+relay heartbeat that reaches the server.
+
+**Worked example: this demo.** One run of scenario 6 that settles with no retries and no browser
+attached:
+
+| Source | Actions |
+|---|---|
+| `__temporal_workflow_stream_poll` Updates on B, from the relay | 29 |
+| `__temporal_workflow_stream_publish` Signals on B, from the stage activities | 21 |
+| `onStageUpdate` Signals into A | 15 |
+| Relay heartbeats that reached the server | 2-3 |
+| **Streaming total** | **67-68** |
+| Everything else: two workflow starts, 9 activities, 3 search-attribute upserts, the timer, the ack | 16 |
+
+The poll and publish counts are from B's history; 20 such runs on a local dev server ranged
+from 29 to 33 polls and 21 to 24 publishes. Heartbeats are not recorded in history: the relay
+runs for 13-16s and sends one at the start, then at most one every 8s.
+
+What adds nothing: status events B publishes from workflow code, which reach subscribers inside
+poll results, and current details. Memo upserts are not on the list of Cloud Actions; search
+attribute upserts are.
+
+Poll counts are driven by wakeups, not by the topics a subscriber asked for. The poll handler
+returns when any item is appended and filters afterwards, so every `progress` batch completes
+a relay poll, usually with no `status` item in it: 8 of the 29 polls carried one, since a
+stage's `PASSED` and the next stage's `STARTED` arrive together. An open page adds a second
+subscription through the SSE bridge with a similar count, and each further page another.
+
+Ways to reduce it in this demo, with what each one trades:
+
+- **Raise the relay's poll cooldown.** `SubscribeOptions.setPollCooldown` defaults to 100ms.
+  At 1s, polls that would each wake on a progress batch are coalesced, bringing the relay to
+  roughly one poll per second of B's run. Status signals to A can lag by up to that second.
+- **Publish fewer progress batches.** Each stage force-flushes its first step and batches the
+  rest at 200ms, about three publish Signals per stage. Dropping the force-flush, raising the
+  batch interval or publishing fewer steps cuts the Signals and the relay polls they wake. The
+  page updates less often.
+- **Keep `progress` off B's stream.** With only status events on it, every relay wakeup carries
+  one, and polls fall to about the 8 that carry one now. The page's progress and retry rows
+  would need another source.
+- **Close the page when it is not needed.** Each subscriber pays for its own polls; the
+  workflow does not share them.
+
+The relay's heartbeats are bounded by the 8s throttle, and its signals into A by the number of
+status events, so neither moves with these settings.
+
 ---
 
 ## How it fits together
@@ -353,8 +499,10 @@ backend/kotlin/          Spring Boot app: API + worker + static assets, one jar
   src/main/kotlin/com/example/payouts/
     app/                 payload converter, Temporal config
     model/{domain,workflow,activity}/   one request/response pair per boundary
-    workflow/            PayoutWorkflow + impl
-    activities/          six interfaces, trivial mocks (delay, log, canned result)
+    model/{stream,memo}/ scenario 6: stream items and memo values
+    workflow/            PayoutWorkflow + impl; scenario 6's two workflows
+    activities/          activity interfaces and mocks (delay, log, canned result),
+                         scenario 6's stage activities and stream relay
     api/                 REST controllers, metrics, status collector
     scenario/            ScenarioStore — failure-injection config, shared with the workers
     worker/              WorkerSupervisor — forks and supervises the worker JVMs
@@ -390,7 +538,7 @@ of the cross-SDK contract.
 
 Every backend test supplies its own request, so nothing covered the request the *UI* posts.
 `DemoScenarioDefaultsTest` closes that gap. It reads the shipped `app.js`, reconstructs every
-body the five buttons can send, and checks each one against the production constants — amounts
+body the six buttons can send, and checks each one against the production constants — amounts
 against `ApprovalThresholds`, every JSON key against `StartPayoutBody`, and the injected failure
 counts against the smallest retry cap the workflow can draw. Each of those fails silently in the
 browser: unknown JSON properties are dropped rather than rejected, so a stale key returns 200 and

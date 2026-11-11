@@ -19,6 +19,8 @@ document made executable — it drives the HTTP surface only, never language int
 | `POST` | `/demo-api/simulation/stop` | |
 | `GET` | `/demo-api/simulation/status` | Live counters, polled at 1s by the UI |
 | `GET` | `/demo-api/actuator/prometheus` | SDK metrics **and** business metrics |
+| `GET` | `/demo-api/streams/{workflowId}/events` | Scenario 6: the workflow's Workflow Stream as server-sent events. `id` is the stream offset; `Last-Event-ID` or `?from=` resumes |
+| `GET` | `/demo-api/payouts/{workflowId}/memo` | Scenario 6: the workflow's memo, read with describe |
 
 ## Behaviour every implementation must match
 
@@ -65,10 +67,18 @@ document made executable — it drives the HTTP surface only, never language int
    refusing a payout and a payout failing validation are different outcomes, and the record has
    to tell them apart. `APPROVAL_TIMEOUT` remains distinct again: nobody looked at all.
 
+10. **Scenario 6 (`scenario = streamed`) starts two workflows.** `POST /payouts` starts the
+   initiator, `payout-streamed-{payoutId}`, and returns `streamWorkflowId`,
+   `{workflowId}-processing`: the child that runs seven stages and hosts a Workflow Stream with
+   topics `status`, `progress` and `retry`. Status events carry a `seq` from 0 with no gaps.
+   The initiator receives every status event as a Signal, holds each `seq` exactly once, and
+   signals the child once it has them all; the child stays open until then.
+
 ## Failure injection
 
 `POST /demo-api/payouts` accepts `behavior` and `transientFailures`, applied to the activity
-named in `step` (default `submitToRail`):
+named in `step` (default `submitToRail`; scenario 6 uses its stage activities, such as
+`transferFunds` and `verifyPayment`):
 
 `PASS` · `FAIL_TRANSIENT` · `FAIL_PERMANENT` · `ACCEPTED_NO_CALLBACK` · `REJECTED` ·
 `COMPENSATION_FAILS`

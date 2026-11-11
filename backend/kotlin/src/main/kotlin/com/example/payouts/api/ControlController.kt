@@ -23,7 +23,7 @@ class ControlController(
         }.isSuccess
         return mapOf(
             "sdkLanguage" to "Kotlin",
-            "sdk" to "Temporal Java SDK 1.38.0",
+            "sdk" to "Temporal Java SDK 1.40.0",
             "taskQueue" to "payouts",
             "namespace" to namespace,
             "worker" to if (reachable) "UP" else "DOWN",
