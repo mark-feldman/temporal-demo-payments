@@ -4,7 +4,7 @@ A local, runnable payout orchestration demo built on Temporal. One payout workfl
 scenarios, a load simulator, and live worker + server metrics, all behind a single URL, so the
 workflow controls and the Temporal UI sit side by side in one window.
 
-**Backend:** Kotlin · Spring Boot · Temporal Java SDK 1.38.0
+**Backend:** Kotlin · Spring Boot · Temporal Java SDK 1.40.0
 **Frontend:** Preact + htm, no build step for the JS · Tailwind v4 for the CSS
 
 ---

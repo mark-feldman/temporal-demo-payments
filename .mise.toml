@@ -2,7 +2,7 @@
 # the Makefile discovers any JDK 21 (scripts/java-home.sh) and scripts/temporal-bin.sh falls
 # back to the CLI on PATH.
 #
-# JDK 21, not the machine default: Kotlin 2.4.20 and Spring Boot are not verified against a
+# JDK 21, not the machine default: Kotlin 2.4.21 and Spring Boot are not verified against a
 # JDK this new, and 21 is the floor for the Temporal SDK's virtual-thread support. Gradle
 # fixes the same version independently via `kotlin { jvmToolchain(21) }`.
 
